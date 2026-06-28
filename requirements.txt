@@ -1,0 +1,39 @@
+# API
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+
+# Veritabanı
+asyncpg==0.30.0
+sqlalchemy[asyncio]==2.0.36
+psycopg2-binary==2.9.10
+
+# Qdrant (vektör DB)
+qdrant-client==1.12.1
+
+# Redis
+redis==5.2.1
+
+# ML - Anomaly Detection
+scikit-learn==1.5.2
+numpy==2.1.3
+pandas==2.2.3
+
+# ML - LSTM (PyTorch - Apple Silicon M serisi için tercih edilir)
+torch==2.5.1
+torchvision==0.20.1
+
+# Embedding (OpenAI alternatifi - yerel/ücretsiz)
+sentence-transformers==3.3.1
+
+# IoT Protokolleri
+paho-mqtt==2.1.0
+pymodbus==3.7.4
+
+# Yardımcı
+python-dotenv==1.0.1
+httpx==0.28.1
+celery==5.4.0
+
+# OpenAI (opsiyonel - kullanmak isterseniz)
+# openai==1.57.0
