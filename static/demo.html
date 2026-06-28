@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maden Dijital İkiz — Canlı Demo</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0a0e1a;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #0f2744 100%);
+    border-bottom: 2px solid #2563eb;
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 1.5rem; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+  header h1 span { color: #3b82f6; }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .team-badge { font-size: 0.72rem; color: #64748b; }
+  .badge {
+    background: #16a34a;
+    color: #fff;
+    font-size: 0.75rem;
+    padding: 4px 12px;
+    border-radius: 99px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .badge::before { content: '●'; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .mqtt-badge {
+    background: #0c1c2e;
+    border: 1px solid #2563eb;
+    color: #93c5fd;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 99px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: 0.5px;
+  }
+  .mqtt-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; animation: pulse 1.5s infinite; }
+  .mqtt-badge.offline { border-color: #7f1d1d; color: #fca5a5; }
+  .mqtt-badge.offline .mqtt-dot { background: #ef4444; }
+
+  /* ── Layout ── */
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
+
+  /* ── KPI Cards ── */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+  .kpi {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+  .kpi .val { font-size: 2.2rem; font-weight: 800; }
+  .kpi .lbl { font-size: 0.78rem; color: #94a3b8; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .kpi.blue .val  { color: #3b82f6; }
+  .kpi.green .val { color: #22c55e; }
+  .kpi.red .val   { color: #ef4444; }
+  .kpi.yellow .val{ color: #f59e0b; }
+
+  /* ── Section title ── */
+  .section-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  /* ── Equipment cards ── */
+  .eq-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .eq-card {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 20px;
+    transition: border-color 0.3s;
+  }
+  .eq-card.anomaly { border-color: #ef4444; box-shadow: 0 0 20px rgba(239,68,68,0.2); }
+  .eq-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
+  .eq-card .eq-type { font-size: 0.75rem; color: #64748b; margin-bottom: 14px; }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .metric { background: #0f172a; border-radius: 8px; padding: 10px 12px; }
+  .metric .m-label { font-size: 0.68rem; color: #64748b; text-transform: uppercase; }
+  .metric .m-val   { font-size: 1.1rem; font-weight: 700; margin-top: 2px; }
+  .metric .m-val.normal  { color: #22c55e; }
+  .metric .m-val.warning { color: #f59e0b; }
+  .metric .m-val.danger  { color: #ef4444; }
+
+  /* ── Metan (CH4) İSG göstergesi ── */
+  .methane {
+    margin-top: 10px;
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+  .methane-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+  .methane-head .mh-label { font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+  .methane-head .mh-badge { font-size: 0.62rem; font-weight: 800; padding: 1px 8px; border-radius: 99px; }
+  .mh-badge.yesil   { background: #14532d; color: #86efac; }
+  .mh-badge.sari    { background: #713f12; color: #fde68a; }
+  .mh-badge.turuncu { background: #7c2d12; color: #fdba74; }
+  .mh-badge.kirmizi { background: #7f1d1d; color: #fca5a5; animation: blink 1s infinite; }
+  .methane-val { font-size: 1.1rem; font-weight: 700; }
+  .methane-val.yesil { color: #22c55e; } .methane-val.sari { color: #f59e0b; }
+  .methane-val.turuncu { color: #fb923c; } .methane-val.kirmizi { color: #ef4444; }
+  .methane-track { height: 5px; background: #1e293b; border-radius: 99px; margin-top: 5px; overflow: hidden; position: relative; }
+  .methane-fill { height: 100%; border-radius: 99px; transition: width 0.6s, background 0.4s; }
+
+  /* ── Global İSG metan banner ── */
+  .isg-banner {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(135deg, #7f1d1d, #991b1b);
+    border: 1px solid #ef4444;
+    border-radius: 12px;
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    animation: blink 1.4s infinite;
+  }
+  .isg-banner.show { display: flex; }
+  .isg-banner.tehlike { background: linear-gradient(135deg, #7c2d12, #9a3412); border-color: #fb923c; }
+  .isg-icon { font-size: 1.6rem; }
+  .isg-text { flex: 1; }
+  .isg-text .it-title { font-size: 0.95rem; font-weight: 800; color: #fff; }
+  .isg-text .it-sub { font-size: 0.8rem; color: #fecaca; margin-top: 2px; }
+
+  .status-bar {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.78rem;
+  }
+  .status-ok      { color: #22c55e; font-weight: 600; }
+  .status-anomaly { color: #ef4444; font-weight: 700; animation: blink 1s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+  .score-bar { height: 6px; background: #1e293b; border-radius: 99px; margin-top: 6px; overflow: hidden; }
+  .score-fill { height: 100%; border-radius: 99px; transition: width 0.5s, background 0.5s; }
+
+  /* ── Chart + Actions row ── */
+  .bottom-row { display: grid; grid-template-columns: 1fr 380px; gap: 16px; margin-bottom: 16px; align-items: start; }
+
+  /* ── Chart card ── */
+  .chart-card {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .chart-controls { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+  .chart-controls select {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .chart-wrap { position: relative; height: 220px; }
+
+  /* ── Action Panel ── */
+  .action-card {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .btn-anomaly {
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 700;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .btn-anomaly:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(220,38,38,0.4); }
+  .btn-anomaly:active { transform: translateY(0); }
+
+  .btn-normal {
+    width: 100%;
+    padding: 10px;
+    background: #1e293b;
+    color: #94a3b8;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-normal:hover { background: #263348; color: #e2e8f0; }
+
+  .eq-select {
+    width: 100%;
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  /* ── Result box ── */
+  .result-box {
+    background: #0f172a;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    border: 1px solid #1e293b;
+    transition: border-color 0.3s;
+  }
+  .result-box.anomaly-result { border-color: #ef4444; background: #1a0f0f; }
+  .result-box.normal-result  { border-color: #22c55e; background: #0f1a0f; }
+  .result-title { font-weight: 700; font-size: 0.88rem; margin-bottom: 6px; }
+  .result-title.danger  { color: #ef4444; }
+  .result-title.success { color: #22c55e; }
+
+  /* ── RAG recommendation box ── */
+  .rag-box {
+    background: #0c1225;
+    border: 1px solid #1e3a5f;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    display: none;
+  }
+  .rag-box.visible { display: block; }
+  .rag-box-title { font-size: 0.75rem; font-weight: 700; color: #3b82f6; margin-bottom: 8px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .rag-item { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #1e293b; }
+  .rag-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .rag-cat { font-size: 0.68rem; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
+  .rag-ttl { font-weight: 600; color: #93c5fd; margin-bottom: 3px; }
+  .rag-cnt { color: #94a3b8; font-size: 0.75rem; }
+  .rag-parts { margin-top: 3px; font-size: 0.68rem; color: #475569; }
+
+  /* ── AI Assistant + LSTM row ── */
+  .ai-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+  .ai-card {
+    background: #111827;
+    border: 1px solid #1e3a5f;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .ai-card .section-title { color: #3b82f6; }
+
+  .ai-input-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .ai-input {
+    flex: 1;
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-family: inherit;
+  }
+  .ai-input:focus { outline: none; border-color: #3b82f6; }
+  .btn-ask {
+    padding: 10px 16px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-ask:hover { background: #1d4ed8; }
+
+  .ai-result {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 0.78rem;
+    min-height: 120px;
+    max-height: 240px;
+    overflow-y: auto;
+    line-height: 1.55;
+  }
+
+  /* ── LSTM card ── */
+  .lstm-card {
+    background: #111827;
+    border: 1px solid #1e3a5f;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .lstm-card .section-title { color: #8b5cf6; }
+  .lstm-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+  .lstm-controls select {
+    flex: 1;
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .btn-predict {
+    padding: 8px 16px;
+    background: #7c3aed;
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .btn-predict:hover { background: #6d28d9; }
+
+  .lstm-result {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 0.78rem;
+    min-height: 120px;
+    line-height: 1.6;
+  }
+  .lstm-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 8px; }
+  .lstm-metric {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+  }
+  .lstm-metric .lm-label { font-size: 0.65rem; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
+  .lstm-metric .lm-val { font-size: 1rem; font-weight: 700; color: #a78bfa; }
+  .lstm-metric .lm-unit { font-size: 0.65rem; color: #475569; }
+
+  /* ── RUL (Kalan Faydalı Ömür) ── */
+  .rul-controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .rul-controls select {
+    flex: 1; min-width: 140px;
+    background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
+    padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; cursor: pointer;
+  }
+  .btn-rul {
+    padding: 8px 16px; background: #7c3aed; color: #fff;
+    font-size: 0.85rem; font-weight: 600; border: none; border-radius: 8px; cursor: pointer;
+  }
+  .btn-rul:hover { background: #6d28d9; }
+
+  .rul-hero { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
+  .gauge { position: relative; width: 120px; height: 120px; flex-shrink: 0; }
+  .gauge svg { transform: rotate(-90deg); }
+  .gauge-track { fill: none; stroke: #1e293b; stroke-width: 11; }
+  .gauge-fill  { fill: none; stroke-width: 11; stroke-linecap: round; transition: stroke-dashoffset 0.8s ease, stroke 0.4s; }
+  .gauge-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .gauge-pct   { font-size: 1.5rem; font-weight: 800; line-height: 1; }
+  .gauge-sub   { font-size: 0.6rem; color: #64748b; text-transform: uppercase; margin-top: 3px; letter-spacing: 0.5px; }
+
+  .rul-info { flex: 1; }
+  .rul-status { display: inline-block; font-size: 0.78rem; font-weight: 800; padding: 3px 12px; border-radius: 99px; margin-bottom: 8px; letter-spacing: 0.5px; }
+  .rul-status.yesil  { background: #14532d; color: #86efac; }
+  .rul-status.sari   { background: #713f12; color: #fde68a; }
+  .rul-status.kirmizi{ background: #7f1d1d; color: #fca5a5; animation: blink 1s infinite; }
+  .rul-big { font-size: 2rem; font-weight: 800; line-height: 1; }
+  .rul-big.yesil { color: #22c55e; } .rul-big.sari { color: #f59e0b; } .rul-big.kirmizi { color: #ef4444; }
+  .rul-big-sub { font-size: 0.72rem; color: #64748b; margin-top: 2px; }
+  .rul-oneri { background: #0c1225; border: 1px solid #1e3a5f; border-radius: 8px; padding: 10px 12px; font-size: 0.76rem; color: #93c5fd; line-height: 1.5; }
+  .rul-oneri b { color: #e2e8f0; }
+  .rul-sensor-bar { margin-top: 8px; }
+  .rul-sensor-bar .sb-label { font-size: 0.68rem; color: #64748b; display: flex; justify-content: space-between; margin-bottom: 3px; }
+  .rul-sensor-bar .sb-track { height: 6px; background: #1e293b; border-radius: 99px; overflow: hidden; }
+  .rul-sensor-bar .sb-fill { height: 100%; border-radius: 99px; transition: width 0.6s; }
+
+  /* ── Anomaly log ── */
+  .log-card {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 0;
+  }
+  .log-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .log-table th {
+    text-align: left;
+    padding: 8px 10px;
+    color: #64748b;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    border-bottom: 1px solid #1e293b;
+  }
+  .log-table td { padding: 10px 10px; border-bottom: 1px solid #1a2235; }
+  .log-table tr:hover td { background: #0f172a; }
+  .tag-anomaly { background: #7f1d1d; color: #fca5a5; padding: 2px 8px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; }
+  .tag-ok      { background: #14532d; color: #86efac; padding: 2px 8px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; }
+
+  .loader { display: none; color: #64748b; font-size: 0.8rem; text-align: center; padding: 20px; }
+  .spinner { color: #64748b; text-align: center; padding: 20px; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⛏ Maden <span>Dijital İkiz</span> — Anomali Tespit Sistemi</h1>
+  <div class="header-right">
+    <div class="team-badge">CankaYazılım · Teknofest 2026</div>
+    <div class="mqtt-badge" id="mqtt-badge" title="Veri giriş katmanı">
+      <span class="mqtt-dot"></span><span id="mqtt-text">MQTT</span>
+    </div>
+    <div class="badge">Sistem Aktif</div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- KPI -->
+  <div class="kpi-row">
+    <div class="kpi blue">
+      <div class="val" id="kpi-total">—</div>
+      <div class="lbl">Toplam Sensör Okuması</div>
+    </div>
+    <div class="kpi green">
+      <div class="val" id="kpi-ok">—</div>
+      <div class="lbl">Normal Çalışma (%)</div>
+    </div>
+    <div class="kpi red">
+      <div class="val" id="kpi-anomaly24">—</div>
+      <div class="lbl">Anomali (24 Saat)</div>
+    </div>
+    <div class="kpi yellow">
+      <div class="val" id="kpi-anomaly1h">—</div>
+      <div class="lbl">Anomali (Son 1 Saat)</div>
+    </div>
+  </div>
+
+  <!-- Global İSG metan banner -->
+  <div class="isg-banner" id="isg-banner">
+    <div class="isg-icon">⚠️</div>
+    <div class="isg-text">
+      <div class="it-title" id="isg-title">İSG METAN ALARMI</div>
+      <div class="it-sub" id="isg-sub"></div>
+    </div>
+  </div>
+
+  <!-- Ekipman kartları -->
+  <div class="section-title">Ekipman Durumu — Gerçek Zamanlı</div>
+  <div class="eq-grid">
+    <div class="eq-card" id="card-conveyor_01">
+      <h3>🔗 Konveyör Bandı</h3>
+      <div class="eq-type">conveyor_01 · Sandvik LH517</div>
+      <div class="metrics" id="metrics-conveyor_01">
+        <div class="metric"><div class="m-label">Sıcaklık</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Titreşim</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Basınç</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Akım</div><div class="m-val">—</div></div>
+      </div>
+      <div class="methane" id="methane-conveyor_01"></div>
+      <div class="status-bar">
+        <span class="status-ok" id="status-conveyor_01">● Normal</span>
+        <span id="score-label-conveyor_01" style="color:#64748b;font-size:0.75rem"></span>
+      </div>
+      <div class="score-bar"><div class="score-fill" id="score-conveyor_01" style="width:0%"></div></div>
+    </div>
+
+    <div class="eq-card" id="card-pump_01">
+      <h3>💧 Pompa Ünitesi</h3>
+      <div class="eq-type">pump_01 · Epiroc</div>
+      <div class="metrics" id="metrics-pump_01">
+        <div class="metric"><div class="m-label">Sıcaklık</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Titreşim</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Basınç</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Akım</div><div class="m-val">—</div></div>
+      </div>
+      <div class="methane" id="methane-pump_01"></div>
+      <div class="status-bar">
+        <span class="status-ok" id="status-pump_01">● Normal</span>
+        <span id="score-label-pump_01" style="color:#64748b;font-size:0.75rem"></span>
+      </div>
+      <div class="score-bar"><div class="score-fill" id="score-pump_01" style="width:0%"></div></div>
+    </div>
+
+    <div class="eq-card" id="card-crusher_01">
+      <h3>🪨 Kırıcı Makinesi</h3>
+      <div class="eq-type">crusher_01 · Caterpillar</div>
+      <div class="metrics" id="metrics-crusher_01">
+        <div class="metric"><div class="m-label">Sıcaklık</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Titreşim</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Basınç</div><div class="m-val">—</div></div>
+        <div class="metric"><div class="m-label">Akım</div><div class="m-val">—</div></div>
+      </div>
+      <div class="methane" id="methane-crusher_01"></div>
+      <div class="status-bar">
+        <span class="status-ok" id="status-crusher_01">● Normal</span>
+        <span id="score-label-crusher_01" style="color:#64748b;font-size:0.75rem"></span>
+      </div>
+      <div class="score-bar"><div class="score-fill" id="score-crusher_01" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Grafik + Aksiyon -->
+  <div class="bottom-row">
+
+    <!-- Grafik -->
+    <div class="chart-card">
+      <div class="section-title">Zaman Serisi Grafiği</div>
+      <div class="chart-controls">
+        <select id="chart-eq">
+          <option value="conveyor_01">Konveyör Bandı</option>
+          <option value="pump_01">Pompa Ünitesi</option>
+          <option value="crusher_01">Kırıcı Makinesi</option>
+        </select>
+        <select id="chart-metric">
+          <option value="temperature">Sıcaklık (°C)</option>
+          <option value="vibration">Titreşim (mm/s)</option>
+          <option value="pressure">Basınç (bar)</option>
+          <option value="current">Akım (A)</option>
+          <option value="gas">Metan (% CH4)</option>
+          <option value="anomaly_score">Anomali Skoru</option>
+        </select>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="timeChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Aksiyon paneli -->
+    <div class="action-card">
+      <div class="section-title">Canlı Test — Isolation Forest</div>
+
+      <select class="eq-select" id="test-eq">
+        <option value="conveyor_01">🔗 Konveyör Bandı</option>
+        <option value="pump_01">💧 Pompa Ünitesi</option>
+        <option value="crusher_01">🪨 Kırıcı Makinesi</option>
+      </select>
+
+      <button class="btn-anomaly" onclick="triggerAnomaly()">
+        ⚠ ANOMALİ TETİKLE
+      </button>
+
+      <button class="btn-normal" onclick="triggerNormal()">
+        ✓ Normal Okuma Al
+      </button>
+
+      <button class="btn-normal" onclick="triggerGas()" style="border-color:#7c2d12;color:#fdba74">
+        💨 METAN KAÇAĞI Tetikle (İSG)
+      </button>
+
+      <div class="result-box" id="result-box">
+        <div style="color:#64748b;text-align:center;padding:10px">
+          Isolation Forest modelini test etmek için anomali tetikleyin.
+        </div>
+      </div>
+
+      <!-- RAG önerileri (anomali sonrası otomatik göster) -->
+      <div class="rag-box" id="rag-inline">
+        <div class="rag-box-title">📚 Sandvik Teknik Öneri</div>
+        <div id="rag-inline-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Asistan + LSTM -->
+  <div class="ai-row">
+
+    <!-- RAG Teknik Asistan -->
+    <div class="ai-card">
+      <div class="section-title">🤖 AI Teknik Asistan (RAG)</div>
+      <div style="font-size:0.75rem;color:#475569;margin-bottom:10px">
+        Sandvik LH517 dokümantasyonunda semantik arama · all-MiniLM-L6-v2
+      </div>
+      <div class="ai-input-row">
+        <input class="ai-input" id="rag-soru" type="text"
+          placeholder="örn: hidrolik basınç düşüklüğü neden olur?"
+          onkeydown="if(event.key==='Enter') askRag()" />
+        <button class="btn-ask" onclick="askRag()">Sor</button>
+      </div>
+      <div class="ai-result" id="rag-result">
+        <span style="color:#475569">Bir soru yazın, teknik dokümantasyondan yanıt alın.</span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <button onclick="quickAsk('motor aşırı ısınma')" class="btn-normal" style="width:auto;padding:4px 10px;font-size:0.72rem">motor ısı</button>
+        <button onclick="quickAsk('titreşim eşikleri rulman bakım')" class="btn-normal" style="width:auto;padding:4px 10px;font-size:0.72rem">titreşim</button>
+        <button onclick="quickAsk('hidrolik basınç pompa arızası')" class="btn-normal" style="width:auto;padding:4px 10px;font-size:0.72rem">hidrolik</button>
+        <button onclick="quickAsk('bakım takvimi periyodik')" class="btn-normal" style="width:auto;padding:4px 10px;font-size:0.72rem">bakım</button>
+      </div>
+    </div>
+
+    <!-- LSTM RUL — Kalan Faydalı Ömür -->
+    <div class="lstm-card">
+      <div class="section-title">🔮 LSTM Arıza Tahmini — Kalan Faydalı Ömür (RUL)</div>
+      <div style="font-size:0.75rem;color:#475569;margin-bottom:10px">
+        Run-to-failure LSTM regresör · degradasyon trendinden arıza zamanı kestirimi
+      </div>
+      <div class="rul-controls">
+        <select id="rul-eq">
+          <option value="conveyor_01">🔗 Konveyör Bandı</option>
+          <option value="pump_01">💧 Pompa Ünitesi</option>
+          <option value="crusher_01">🪨 Kırıcı Makinesi</option>
+        </select>
+        <select id="rul-senaryo">
+          <option value="normal">Canlı veri (gerçek)</option>
+          <option value="degradasyon">Arıza senaryosu (demo)</option>
+        </select>
+        <button class="btn-rul" onclick="runRUL()">Tahmin Et</button>
+      </div>
+      <div class="lstm-result" id="rul-result">
+        <span style="color:#475569">Ekipman ve senaryo seçip "Tahmin Et"e basın.<br>
+        Model son 20 okumadan makinenin <b>kaç saat sonra arıza riski</b> taşıdığını tahmin eder.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Anomali logu -->
+  <div class="log-card">
+    <div class="section-title" style="margin-bottom:14px">Son Anomali Kayıtları</div>
+    <table class="log-table">
+      <thead>
+        <tr>
+          <th>Zaman</th>
+          <th>Ekipman</th>
+          <th>Anomali Skoru</th>
+          <th>Açıklama</th>
+          <th>Durum</th>
+        </tr>
+      </thead>
+      <tbody id="log-body">
+        <tr><td colspan="5" class="loader">Yükleniyor...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+const API = 'http://localhost:8000';
+let timeChart = null;
+
+// ── Chart ──────────────────────────────────────────
+function initChart() {
+  const ctx = document.getElementById('timeChart').getContext('2d');
+  timeChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [{
+      label: 'Sıcaklık (°C)',
+      data: [],
+      borderColor: '#3b82f6',
+      backgroundColor: 'rgba(59,130,246,0.08)',
+      borderWidth: 2,
+      pointRadius: 2,
+      tension: 0.4,
+      fill: true,
+    }]},
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 11 } } }
+      },
+      animation: { duration: 400 },
+    }
+  });
+}
+
+async function updateChart() {
+  const eq     = document.getElementById('chart-eq').value;
+  const metric = document.getElementById('chart-metric').value;
+  const res    = await fetch(`${API}/dashboard/timeseries/${eq}/${metric}?minutes=60`);
+  const data   = await res.json();
+
+  const colors = { temperature: '#f59e0b', vibration: '#8b5cf6',
+                   pressure: '#06b6d4', current: '#ec4899', gas: '#10b981', anomaly_score: '#ef4444' };
+  const labels = { temperature: 'Sıcaklık (°C)', vibration: 'Titreşim (mm/s)',
+                   pressure: 'Basınç (bar)', current: 'Akım (A)', gas: 'Metan (% CH4)', anomaly_score: 'Anomali Skoru' };
+
+  timeChart.data.labels                        = data.labels.map(t => t.slice(11,19));
+  timeChart.data.datasets[0].data             = data.values;
+  timeChart.data.datasets[0].label            = labels[metric];
+  timeChart.data.datasets[0].borderColor      = colors[metric];
+  timeChart.data.datasets[0].backgroundColor  = colors[metric] + '15';
+  timeChart.data.datasets[0].pointBackgroundColor = data.anomalies.map(a => a ? '#ef4444' : colors[metric]);
+  timeChart.data.datasets[0].pointRadius           = data.anomalies.map(a => a ? 5 : 2);
+  timeChart.update();
+}
+
+// ── KPI & Ekipman ──────────────────────────────────
+async function updateSummary() {
+  const res  = await fetch(`${API}/dashboard/summary`);
+  const data = await res.json();
+  document.getElementById('kpi-total').textContent     = data.toplam_okuma.toLocaleString();
+  const pct = data.toplam_okuma > 0
+    ? (((data.toplam_okuma - data.anomali_24h) / data.toplam_okuma) * 100).toFixed(1) + '%'
+    : '—';
+  document.getElementById('kpi-ok').textContent        = pct;
+  document.getElementById('kpi-anomaly24').textContent = data.anomali_24h;
+  document.getElementById('kpi-anomaly1h').textContent = data.anomali_1h;
+}
+
+function metricColor(key, val) {
+  const thresholds = {
+    temperature: [65, 80], vibration: [5, 8], pressure: [7, 9], current: [35, 45]
+  };
+  const t = thresholds[key];
+  if (!t) return 'normal';
+  if (val > t[1]) return 'danger';
+  if (val > t[0]) return 'warning';
+  return 'normal';
+}
+
+const EQ_NAMES = { conveyor_01: 'Konveyör', pump_01: 'Pompa', crusher_01: 'Kırıcı' };
+
+async function updateEquipment() {
+  const res  = await fetch(`${API}/dashboard/latest-all`);
+  const data = await res.json();
+
+  const metricKeys   = ['temperature', 'vibration', 'pressure', 'current'];
+  const metricLabels = ['Sıcaklık', 'Titreşim', 'Basınç', 'Akım'];
+  const metricUnits  = ['°C', ' mm/s', ' bar', ' A'];
+
+  let worstGas = null;   // global İSG banner için en kritik metan
+
+  for (const [eqId, d] of Object.entries(data)) {
+    const card = document.getElementById(`card-${eqId}`);
+    if (!card) continue;
+    card.classList.toggle('anomaly', d.is_anomaly);
+
+    const metricsEl = document.getElementById(`metrics-${eqId}`);
+    metricsEl.innerHTML = metricKeys.map((k, i) => `
+      <div class="metric">
+        <div class="m-label">${metricLabels[i]}</div>
+        <div class="m-val ${metricColor(k, d[k])}">${d[k].toFixed(1)}${metricUnits[i]}</div>
+      </div>
+    `).join('');
+
+    // Metan (CH4) İSG göstergesi
+    const gas = d.gas ?? 0;
+    const gs  = d.gas_status || { seviye: 'NORMAL', renk: 'yesil' };
+    const renk = gs.renk || 'yesil';
+    // kritik eşik %2 = bar dolu
+    const gasPct = Math.min(100, (gas / 2.0) * 100);
+    const methEl = document.getElementById(`methane-${eqId}`);
+    if (methEl) {
+      methEl.innerHTML = `
+        <div class="methane-head">
+          <span class="mh-label">🟢 Metan (CH₄) — İSG</span>
+          <span class="mh-badge ${renk}">${gs.seviye}</span>
+        </div>
+        <div class="methane-val ${renk}">%${gas.toFixed(2)}</div>
+        <div class="methane-track"><div class="methane-fill" style="width:${gasPct}%;background:var(--c,${gasColor(renk)})"></div></div>
+      `;
+    }
+
+    if (gs.seviye !== 'NORMAL') {
+      const rank = { UYARI: 1, TEHLİKE: 2, KRİTİK: 3 };
+      if (!worstGas || rank[gs.seviye] > rank[worstGas.seviye]) {
+        worstGas = { eqId, seviye: gs.seviye, mesaj: gs.mesaj, gas };
+      }
+    }
+
+    const statusEl = document.getElementById(`status-${eqId}`);
+    if (d.is_anomaly) {
+      statusEl.className = 'status-anomaly';
+      statusEl.textContent = '⚠ ANOMALİ';
+    } else {
+      statusEl.className = 'status-ok';
+      statusEl.textContent = '● Normal';
+    }
+
+    const pct = Math.min(100, d.anomaly_score * 100);
+    const fill = document.getElementById(`score-${eqId}`);
+    fill.style.width      = pct + '%';
+    fill.style.background = pct > 70 ? '#ef4444' : pct > 40 ? '#f59e0b' : '#22c55e';
+    document.getElementById(`score-label-${eqId}`).textContent = `Skor: ${d.anomaly_score}`;
+  }
+
+  updateIsgBanner(worstGas);
+}
+
+function gasColor(renk) {
+  return { yesil: '#22c55e', sari: '#f59e0b', turuncu: '#fb923c', kirmizi: '#ef4444' }[renk] || '#22c55e';
+}
+
+function updateIsgBanner(worst) {
+  const banner = document.getElementById('isg-banner');
+  if (!worst) { banner.classList.remove('show'); return; }
+  banner.classList.add('show');
+  banner.classList.toggle('tehlike', worst.seviye === 'TEHLİKE' || worst.seviye === 'UYARI');
+  const eqName = EQ_NAMES[worst.eqId] || worst.eqId;
+  document.getElementById('isg-title').textContent = `⚠️ İSG METAN ${worst.seviye} — ${eqName}`;
+  document.getElementById('isg-sub').textContent = worst.mesaj;
+}
+
+// ── Anomali logu ────────────────────────────────────
+async function updateLog() {
+  const res  = await fetch(`${API}/dashboard/recent-anomalies?limit=10`);
+  const data = await res.json();
+  const tbody = document.getElementById('log-body');
+
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#475569;text-align:center;padding:20px">Henüz anomali kaydı yok</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.map(l => {
+    const t  = new Date(l.time).toLocaleString('tr-TR');
+    const eq = { conveyor_01: '🔗 Konveyör', pump_01: '💧 Pompa', crusher_01: '🪨 Kırıcı' }[l.equipment_id] || l.equipment_id;
+    const score  = (l.anomaly_score * 100).toFixed(0) + '%';
+    const status = l.resolved
+      ? '<span class="tag-ok">Çözüldü</span>'
+      : '<span class="tag-anomaly">Aktif</span>';
+    return `<tr>
+      <td style="color:#94a3b8">${t}</td>
+      <td><strong>${eq}</strong></td>
+      <td><strong style="color:#ef4444">${score}</strong></td>
+      <td style="color:#94a3b8">${l.description || '—'}</td>
+      <td>${status}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Butonlar ────────────────────────────────────────
+async function triggerAnomaly() {
+  const eq  = document.getElementById('test-eq').value;
+  const box = document.getElementById('result-box');
+  const ragBox = document.getElementById('rag-inline');
+  box.className = 'result-box';
+  box.innerHTML = '<div class="spinner">⟳ Isolation Forest analiz ediyor...</div>';
+  ragBox.classList.remove('visible');
+
+  const res  = await fetch(`${API}/sensors/simulate/${eq}?force_anomaly=true`, { method: 'POST' });
+  const data = await res.json();
+
+  const pct = (data.anomaly_score * 100).toFixed(1);
+  box.className = 'result-box anomaly-result';
+  box.innerHTML = `
+    <div class="result-title danger">⚠ ANOMALİ TESPİT EDİLDİ</div>
+    <div style="margin:6px 0;line-height:1.7">
+      <strong>Ekipman:</strong> ${eq}<br>
+      <strong>Skor:</strong> <span style="color:#ef4444;font-size:1.1rem;font-weight:800">${pct}%</span>
+      &nbsp;<strong>Sıcaklık:</strong> ${data.temperature?.toFixed(1)}°C
+      &nbsp;<strong>Titreşim:</strong> ${data.vibration?.toFixed(2)} mm/s<br>
+      <strong>Açıklama:</strong> ${data.description || 'Çoklu parametre sapması'}
+    </div>
+  `;
+
+  // RAG önerilerini getir
+  try {
+    const ragRes = await fetch(
+      `${API}/rag/anomali-asistan?ekipman=${eq}&aciklama=${encodeURIComponent(data.description || 'anomali tespit')}`
+    );
+    const ragData = await ragRes.json();
+    if (ragData.sonuclar && ragData.sonuclar.length) {
+      document.getElementById('rag-inline-content').innerHTML = ragData.sonuclar.map(r => `
+        <div class="rag-item">
+          <div class="rag-cat">${r.category}</div>
+          <div class="rag-ttl">${r.title}</div>
+          <div class="rag-cnt">${r.content.slice(0, 160)}…</div>
+          ${r.part_numbers.length ? `<div class="rag-parts">P/N: ${r.part_numbers.join(', ')}</div>` : ''}
+        </div>
+      `).join('');
+      ragBox.classList.add('visible');
+    }
+  } catch(e) {}
+
+  refresh();
+}
+
+async function triggerNormal() {
+  const eq  = document.getElementById('test-eq').value;
+  const box = document.getElementById('result-box');
+  const ragBox = document.getElementById('rag-inline');
+  box.className = 'result-box';
+  box.innerHTML = '<div class="spinner">⟳ Analiz ediliyor...</div>';
+  ragBox.classList.remove('visible');
+
+  const res  = await fetch(`${API}/sensors/simulate/${eq}`, { method: 'POST' });
+  const data = await res.json();
+
+  const pct = (data.anomaly_score * 100).toFixed(1);
+  box.className = 'result-box normal-result';
+  box.innerHTML = `
+    <div class="result-title success">✓ Normal Çalışma</div>
+    <div style="margin:6px 0;line-height:1.7">
+      <strong>Ekipman:</strong> ${eq}<br>
+      <strong>Skor:</strong> <span style="color:#22c55e;font-size:1.1rem;font-weight:800">${pct}%</span>
+      &nbsp;<strong>Sıcaklık:</strong> ${data.temperature?.toFixed(1)}°C
+      &nbsp;<strong>Titreşim:</strong> ${data.vibration?.toFixed(2)} mm/s<br>
+      <strong>Durum:</strong> Tüm parametreler normal aralıkta.
+    </div>
+  `;
+  refresh();
+}
+
+async function triggerGas() {
+  const eq  = document.getElementById('test-eq').value;
+  const box = document.getElementById('result-box');
+  const ragBox = document.getElementById('rag-inline');
+  box.className = 'result-box';
+  box.innerHTML = '<div class="spinner">⟳ Metan sensörü okunuyor...</div>';
+  ragBox.classList.remove('visible');
+
+  const res  = await fetch(`${API}/sensors/simulate/${eq}?force_gas=true`, { method: 'POST' });
+  const data = await res.json();
+  const gas  = data.gas ?? 0;
+
+  box.className = 'result-box anomaly-result';
+  box.innerHTML = `
+    <div class="result-title danger">💨 İSG METAN ALARMI</div>
+    <div style="margin:6px 0;line-height:1.7">
+      <strong>Ekipman:</strong> ${eq}<br>
+      <strong>Metan (CH₄):</strong> <span style="color:#fb923c;font-size:1.2rem;font-weight:800">%${gas.toFixed(2)}</span>
+      &nbsp;<span style="font-size:0.72rem;color:#94a3b8">(eşik: %1.0 uyarı, %1.5 tehlike, %2.0 tahliye)</span><br>
+      <strong>Müdahale:</strong> Elektrikli ekipmanı durdurun, havalandırmayı artırın.
+    </div>
+  `;
+  refresh();
+}
+
+// ── RAG Asistan ─────────────────────────────────────
+async function askRag() {
+  const soru    = document.getElementById('rag-soru').value.trim();
+  if (!soru) return;
+  const resultEl = document.getElementById('rag-result');
+  resultEl.innerHTML = '<span style="color:#64748b">⟳ Sandvik dokümantasyonunda aranıyor...</span>';
+
+  try {
+    const res  = await fetch(`${API}/rag/sor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ soru, limit: 3 }),
+    });
+    const data = await res.json();
+
+    if (!data.sonuclar || !data.sonuclar.length) {
+      resultEl.innerHTML = '<span style="color:#475569">İlgili kayıt bulunamadı. Farklı bir soru deneyin.</span>';
+      return;
+    }
+
+    resultEl.innerHTML = data.sonuclar.map((r, i) => `
+      <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #1e293b">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:0.68rem;color:#3b82f6;text-transform:uppercase;font-weight:700">${r.category}</span>
+          <span style="font-size:0.68rem;color:#475569">uyum: ${(r.score * 100).toFixed(0)}%</span>
+        </div>
+        <div style="font-weight:600;color:#93c5fd;margin-bottom:4px">${r.title}</div>
+        <div style="color:#94a3b8;font-size:0.77rem;line-height:1.55">${r.content}</div>
+        ${r.part_numbers.length ? `<div style="margin-top:4px;font-size:0.68rem;color:#475569">Parça no: ${r.part_numbers.join(', ')}</div>` : ''}
+      </div>
+    `).join('');
+  } catch(e) {
+    resultEl.innerHTML = '<span style="color:#ef4444">Bağlantı hatası. Sunucu çalışıyor mu?</span>';
+  }
+}
+
+function quickAsk(text) {
+  document.getElementById('rag-soru').value = text;
+  askRag();
+}
+
+// ── LSTM RUL — Kalan Faydalı Ömür ────────────────────
+const RUL_COLORS = { yesil: '#22c55e', sari: '#f59e0b', kirmizi: '#ef4444' };
+
+async function runRUL() {
+  const eq       = document.getElementById('rul-eq').value;
+  const senaryo  = document.getElementById('rul-senaryo').value;
+  const resultEl = document.getElementById('rul-result');
+  resultEl.innerHTML = '<div class="spinner">⟳ LSTM kalan ömrü hesaplıyor...</div>';
+
+  try {
+    const res = await fetch(`${API}/predict/rul/${eq}?senaryo=${senaryo}`);
+    if (!res.ok) {
+      const err = await res.json();
+      resultEl.innerHTML = `<span style="color:#f59e0b">⚠ ${err.detail || 'Yeterli veri yok'}</span>`;
+      return;
+    }
+    const d = await res.json();
+    const renk = d.renk || 'yesil';
+    const col  = RUL_COLORS[renk];
+
+    // gauge: sağlık yüzdesi (çevre = 2πr, r=52)
+    const r = 52, circ = 2 * Math.PI * r;
+    const offset = circ * (1 - (d.saglik_yuzde || 0) / 100);
+
+    const rulText = d.rul_saat >= 24
+      ? `${d.rul_gun} <span class="rul-big-sub" style="display:inline">gün</span>`
+      : `${d.rul_saat} <span class="rul-big-sub" style="display:inline">saat</span>`;
+
+    const dogrulama = (d.gercek_rul !== undefined)
+      ? `<div style="margin-top:6px;font-size:0.68rem;color:#475569">Senaryo gerçek RUL: ${d.gercek_rul}h · Arıza modu: ${d.ariza_modu}</div>`
+      : '';
+
+    resultEl.innerHTML = `
+      <div class="rul-hero">
+        <div class="gauge">
+          <svg width="120" height="120" viewBox="0 0 120 120">
+            <circle class="gauge-track" cx="60" cy="60" r="${r}"></circle>
+            <circle class="gauge-fill" cx="60" cy="60" r="${r}"
+              stroke="${col}" stroke-dasharray="${circ}" stroke-dashoffset="${offset}"></circle>
+          </svg>
+          <div class="gauge-label">
+            <div class="gauge-pct" style="color:${col}">%${Math.round(d.saglik_yuzde)}</div>
+            <div class="gauge-sub">Sağlık</div>
+          </div>
+        </div>
+        <div class="rul-info">
+          <span class="rul-status ${renk}">${d.durum}</span>
+          <div class="rul-big ${renk}">${rulText}</div>
+          <div class="rul-big-sub">tahmini kalan faydalı ömür (RUL)</div>
+        </div>
+      </div>
+
+      <div class="rul-sensor-bar">
+        <div class="sb-label"><span>Baskın belirti: <b style="color:#cbd5e1">${d.baskin_sensor}</b></span><span>${d.sensor_doluluk}% kritik eşik</span></div>
+        <div class="sb-track"><div class="sb-fill" style="width:${d.sensor_doluluk}%;background:${col}"></div></div>
+      </div>
+
+      <div class="rul-oneri" style="margin-top:10px">💡 ${d.oneri}</div>
+      <div style="margin-top:8px;font-size:0.68rem;color:#475569">
+        ${d.senaryo} · LSTM regresör (2 katman, 64 gizli birim) · son 20 okuma ${dogrulama}
+      </div>
+    `;
+  } catch(e) {
+    resultEl.innerHTML = '<span style="color:#ef4444">Bağlantı hatası.</span>';
+  }
+}
+
+// ── MQTT durum ──────────────────────────────────────
+async function updateMqtt() {
+  try {
+    const res  = await fetch(`${API}/dashboard/mqtt-status`);
+    const data = await res.json();
+    const badge = document.getElementById('mqtt-badge');
+    const text  = document.getElementById('mqtt-text');
+    if (data.baglanti === 'aktif') {
+      badge.classList.remove('offline');
+      text.textContent = 'MQTT Bağlı';
+      badge.title = `${data.protokol} · ${data.broker} · ${data.topic}`;
+    } else {
+      badge.classList.add('offline');
+      text.textContent = 'MQTT Kapalı';
+    }
+  } catch(e) {
+    document.getElementById('mqtt-badge').classList.add('offline');
+    document.getElementById('mqtt-text').textContent = 'MQTT Kapalı';
+  }
+}
+
+// ── Refresh ─────────────────────────────────────────
+async function refresh() {
+  await Promise.all([updateSummary(), updateEquipment(), updateLog(), updateChart(), updateMqtt()]);
+}
+
+document.getElementById('chart-eq').addEventListener('change', updateChart);
+document.getElementById('chart-metric').addEventListener('change', updateChart);
+
+initChart();
+refresh();
+setInterval(refresh, 8000);
+</script>
+</body>
+</html>
