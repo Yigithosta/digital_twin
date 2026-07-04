@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Madencilik Tünel Şeması — Prototip</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="header">
+    <h1>⛏ Madencilik <span>Tünel Şeması</span> — Prototip</h1>
+    <p>Bağımsız 2D SVG şema · sensör durumu (yeşil/kırmızı) dummy veriyle güncellenir</p>
+  </div>
+
+  <!-- Ölçeklenebilir SVG şema (viewBox ile her boyuta uyar) -->
+  <div class="schema-wrap">
+    <svg viewBox="0 0 820 520" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="Üç tünel hattı ve üç sensör içeren maden şeması">
+
+      <!-- yer altı katman fonu -->
+      <rect x="0" y="90" width="820" height="430" fill="#0c1320"/>
+      <rect x="0" y="90" width="820" height="6" fill="#3b2f23"/>
+
+      <!-- yüzey + kuyu kulesi (headframe) -->
+      <line x1="0" y1="90" x2="820" y2="90" stroke="#475569" stroke-width="2"/>
+      <text x="20" y="78" fill="#64748b" font-size="13" font-weight="600">YÜZEY</text>
+      <g stroke="#5b6b86" stroke-width="4" fill="none">
+        <path d="M95 90 L120 30 L145 90"/>
+        <line x1="120" y1="30" x2="120" y2="90"/>
+      </g>
+      <circle cx="120" cy="44" r="9" fill="none" stroke="#5b6b86" stroke-width="3"/>
+
+      <!-- ana düşey kuyu (shaft) -->
+      <rect x="108" y="90" width="24" height="380" rx="4" fill="#2d3a52" stroke="#475569" stroke-width="2"/>
+
+      <!-- ===== 3 TÜNEL HATTI (node) ===== -->
+      <!-- Tünel A -->
+      <line class="tunnel" x1="120" y1="170" x2="710" y2="170" stroke="#3b4a63" stroke-width="16" stroke-linecap="round"/>
+      <line x1="120" y1="170" x2="710" y2="170" stroke="#1b2433" stroke-width="6" stroke-linecap="round"/>
+      <text x="724" y="175" fill="#94a3b8" font-size="13" font-weight="700">Tünel A</text>
+
+      <!-- Tünel B -->
+      <line class="tunnel" x1="120" y1="300" x2="650" y2="300" stroke="#3b4a63" stroke-width="16" stroke-linecap="round"/>
+      <line x1="120" y1="300" x2="650" y2="300" stroke="#1b2433" stroke-width="6" stroke-linecap="round"/>
+      <text x="664" y="305" fill="#94a3b8" font-size="13" font-weight="700">Tünel B</text>
+
+      <!-- Tünel C -->
+      <line class="tunnel" x1="120" y1="430" x2="730" y2="430" stroke="#3b4a63" stroke-width="16" stroke-linecap="round"/>
+      <line x1="120" y1="430" x2="730" y2="430" stroke="#1b2433" stroke-width="6" stroke-linecap="round"/>
+      <text x="744" y="435" fill="#94a3b8" font-size="13" font-weight="700">Tünel C</text>
+
+      <!-- ===== 3 SENSÖR (tünel hatları üzerinde) ===== -->
+      <!-- Sensör 1 — Tünel A -->
+      <g data-sensor="0">
+        <circle class="pulse normal" id="pulse-0" cx="430" cy="170" r="16"/>
+        <circle class="sensor normal" id="dot-0" cx="430" cy="170" r="16" stroke-width="3"/>
+        <text x="430" y="142" text-anchor="middle" fill="#cbd5e1" font-size="12" font-weight="700">S1 · Metan</text>
+        <text id="val-0" x="430" y="204" text-anchor="middle" fill="#64748b" font-size="11">—</text>
+      </g>
+
+      <!-- Sensör 2 — Tünel B -->
+      <g data-sensor="1">
+        <circle class="pulse normal" id="pulse-1" cx="380" cy="300" r="16"/>
+        <circle class="sensor normal" id="dot-1" cx="380" cy="300" r="16" stroke-width="3"/>
+        <text x="380" y="272" text-anchor="middle" fill="#cbd5e1" font-size="12" font-weight="700">S2 · Sıcaklık</text>
+        <text id="val-1" x="380" y="334" text-anchor="middle" fill="#64748b" font-size="11">—</text>
+      </g>
+
+      <!-- Sensör 3 — Tünel C -->
+      <g data-sensor="2">
+        <circle class="pulse normal" id="pulse-2" cx="540" cy="430" r="16"/>
+        <circle class="sensor normal" id="dot-2" cx="540" cy="430" r="16" stroke-width="3"/>
+        <text x="540" y="402" text-anchor="middle" fill="#cbd5e1" font-size="12" font-weight="700">S3 · Titreşim</text>
+        <text id="val-2" x="540" y="464" text-anchor="middle" fill="#64748b" font-size="11">—</text>
+      </g>
+    </svg>
+
+    <!-- Kontroller -->
+    <div class="controls">
+      <button class="btn btn-primary" onclick="updateSensors()">🔄 Veriyi Güncelle (Dummy)</button>
+      <button class="btn btn-alarm" onclick="forceAlarm()">⚠ Alarm Tetikle</button>
+      <span class="status-pill" id="status">● Tümü Normal</span>
+    </div>
+
+    <!-- Açıklama -->
+    <div class="legend">
+      <div class="item"><span class="dot green"></span> Normal</div>
+      <div class="item"><span class="dot red"></span> Alarm / Tehlike</div>
+    </div>
+  </div>
+
+<script>
+/* ============================================================
+   Dummy (örnek) veri katmanı — backend YOK.
+   Gerçek projede bu fonksiyon /dashboard/latest-all gibi
+   bir API'den beslenecek; şu an rastgele üretiyor.
+   ============================================================ */
+
+// Sensör tanımları (birim + alarm eşiği)
+const SENSORS = [
+  { id: "S1", ad: "Metan",    birim: "% CH₄", esik: 1.0, uret: () => rand(0.1, 2.4) },
+  { id: "S2", ad: "Sıcaklık", birim: "°C",    esik: 40,  uret: () => rand(22, 55)  },
+  { id: "S3", ad: "Titreşim", birim: "mm/s",  esik: 5.0, uret: () => rand(0.5, 9)  },
+];
+
+function rand(min, max) {
+  return Math.round((min + Math.random() * (max - min)) * 100) / 100;
+}
+
+// Dummy veri üretici: her sensör için değer + durum döner
+function generateDummyData() {
+  return SENSORS.map(s => {
+    const deger = s.uret();
+    return { ...s, deger, alarm: deger >= s.esik };
+  });
+}
+
+// Şemayı gelen veriye göre boyar (yeşil/kırmızı)
+function updateSensors() {
+  const veri = generateDummyData();
+  let alarmSayisi = 0;
+
+  veri.forEach((s, i) => {
+    const durum = s.alarm ? "alarm" : "normal";
+    if (s.alarm) alarmSayisi++;
+
+    document.getElementById(`dot-${i}`).setAttribute("class", `sensor ${durum}`);
+    document.getElementById(`pulse-${i}`).setAttribute("class", `pulse ${durum}`);
+
+    const valEl = document.getElementById(`val-${i}`);
+    valEl.textContent = `${s.deger} ${s.birim}`;
+    valEl.setAttribute("fill", s.alarm ? "#fca5a5" : "#86efac");
+  });
+
+  const pill = document.getElementById("status");
+  if (alarmSayisi > 0) {
+    pill.textContent = `⚠ ${alarmSayisi} sensörde ALARM`;
+    pill.classList.add("has-alarm");
+  } else {
+    pill.textContent = "● Tümü Normal";
+    pill.classList.remove("has-alarm");
+  }
+}
+
+// Test için: tüm sensörleri zorla alarma sok
+function forceAlarm() {
+  SENSORS.forEach((s, i) => {
+    document.getElementById(`dot-${i}`).setAttribute("class", "sensor alarm");
+    document.getElementById(`pulse-${i}`).setAttribute("class", "pulse alarm");
+    const valEl = document.getElementById(`val-${i}`);
+    valEl.textContent = `${(s.esik * 1.4).toFixed(2)} ${s.birim}`;
+    valEl.setAttribute("fill", "#fca5a5");
+  });
+  const pill = document.getElementById("status");
+  pill.textContent = "⚠ 3 sensörde ALARM";
+  pill.classList.add("has-alarm");
+}
+
+// İlk çizim + her 3 saniyede otomatik güncelleme
+updateSensors();
+setInterval(updateSensors, 3000);
+</script>
+</body>
+</html>

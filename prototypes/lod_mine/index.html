@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yeraltı Maden — LOD Dijital İkiz (Prototip)</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',system-ui,sans-serif; background:#0a0e1a; color:#e2e8f0; padding:18px; }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+
+  .top { display:flex; justify-content:space-between; align-items:flex-end; max-width:1200px; margin:0 auto 12px; }
+  .top h1 { font-size:1.3rem; font-weight:800; }
+  .top h1 span { color:#3b82f6; }
+  .top p { font-size:0.78rem; color:#64748b; margin-top:3px; }
+  .lod-hud { text-align:right; font-size:0.74rem; color:#64748b; }
+  .lod-hud b { color:#93c5fd; font-size:0.95rem; }
+
+  .stage {
+    position:relative; max-width:1200px; margin:0 auto;
+    background:#0c1320; border:1px solid #1e293b; border-radius:14px; overflow:hidden;
+  }
+  #map { width:100%; height:600px; display:block; cursor:grab; background:#0a0f1c; }
+  #map:active { cursor:grabbing; }
+
+  /* LOD katman görünürlüğü — zoom seviyesine göre */
+  .layer-mid, .layer-detail { transition:opacity 0.35s ease; }
+  #map[data-lod="macro"] .layer-mid,
+  #map[data-lod="macro"] .layer-detail,
+  #map[data-lod="mid"]   .layer-detail { opacity:0; pointer-events:none; }
+  #map[data-lod="detail"] .layer-macro-only,
+  #map[data-lod="mid"]    .layer-macro-only { opacity:0; }
+
+  .veh { cursor:pointer; }
+  .veh-body { transition:fill 0.4s, stroke 0.4s; }
+
+  /* Kontroller */
+  .controls { position:absolute; left:14px; bottom:14px; display:flex; gap:6px; }
+  .controls button {
+    width:38px; height:38px; border-radius:9px; border:1px solid #334155;
+    background:#111827cc; color:#e2e8f0; font-size:1.1rem; font-weight:700; cursor:pointer; backdrop-filter:blur(4px);
+  }
+  .controls button:hover { background:#1e293b; }
+  .controls .wide { width:auto; padding:0 14px; font-size:0.8rem; }
+
+  .hint { position:absolute; right:14px; bottom:14px; font-size:0.7rem; color:#475569;
+          background:#0c1320aa; padding:6px 10px; border-radius:8px; backdrop-filter:blur(4px); }
+
+  /* Araç iç detay paneli (sub-view) */
+  .subview {
+    position:absolute; top:14px; right:14px; width:268px;
+    background:#111827ee; border:1px solid #2563eb; border-radius:12px; padding:16px;
+    transform:translateX(300px); opacity:0; transition:transform 0.4s ease, opacity 0.4s ease; backdrop-filter:blur(6px);
+  }
+  .subview.open { transform:translateX(0); opacity:1; }
+  .sv-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+  .sv-head h3 { font-size:1rem; font-weight:800; }
+  .sv-badge { font-size:0.66rem; font-weight:800; padding:2px 9px; border-radius:99px; }
+  .sv-sub { font-size:0.68rem; color:#64748b; margin-bottom:12px; }
+  .sv-metric { background:#0f172a; border-radius:8px; padding:9px 11px; margin-bottom:7px; display:flex; justify-content:space-between; align-items:center; }
+  .sv-metric .l { font-size:0.7rem; color:#94a3b8; }
+  .sv-metric .v { font-size:1rem; font-weight:800; }
+  .sv-foot { font-size:0.64rem; color:#475569; margin-top:8px; text-align:center; }
+
+  .ok   { color:#22c55e; } .warn { color:#f59e0b; } .alarm { color:#ef4444; }
+  .bg-ok{background:#14532d;color:#86efac;} .bg-warn{background:#713f12;color:#fde68a;} .bg-alarm{background:#7f1d1d;color:#fca5a5;}
+</style>
+</head>
+<body>
+  <h2 class="sr-only">LOD prensipli 2D yeraltı maden dijital ikizi: harita zoom yapıldıkça tüneller, LH517 araçları ve araç içi sensör panelleri açılır.</h2>
+
+  <div class="top">
+    <div>
+      <h1>⛏ Yeraltı Maden — <span>LOD Dijital İkiz</span></h1>
+      <p>Hiyerarşik görselleştirme · zoom yaptıkça detay açılır · D3.js zoom/pan · backend yok (mock veri)</p>
+    </div>
+    <div class="lod-hud">
+      <div>Zoom: <b id="hud-k">1.0×</b></div>
+      <div>Seviye: <b id="hud-lod">MAKRO</b></div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <svg id="map" viewBox="0 0 1400 900" preserveAspectRatio="xMidYMid meet" data-lod="macro" role="img" aria-label="Maden haritası">
+      <g id="world">
+        <!-- kaya zemin -->
+        <rect x="0" y="0" width="1400" height="900" fill="#0a0f1c"/>
+
+        <!-- ===== TÜNEL AĞI (makro — her zaman görünür) ===== -->
+        <g fill="none" stroke-linecap="round">
+          <!-- portal + rampa -->
+          <polyline points="120,110 300,300 300,470" stroke="#2b3purpleX" />
+          <polyline points="120,110 300,300 300,470" stroke="#3b4a63" stroke-width="22"/>
+          <polyline points="120,110 300,300 300,470" stroke="#11192b" stroke-width="8"/>
+          <!-- ana nakliye galerisi -->
+          <line x1="300" y1="470" x2="1240" y2="470" stroke="#3b4a63" stroke-width="24"/>
+          <line x1="300" y1="470" x2="1240" y2="470" stroke="#11192b" stroke-width="9"/>
+          <!-- üst üretim ayakları (crosscut) -->
+          <line x1="470" y1="470" x2="470" y2="250" stroke="#3b4a63" stroke-width="18"/><line x1="470" y1="470" x2="470" y2="250" stroke="#11192b" stroke-width="6"/>
+          <line x1="700" y1="470" x2="700" y2="250" stroke="#3b4a63" stroke-width="18"/><line x1="700" y1="470" x2="700" y2="250" stroke="#11192b" stroke-width="6"/>
+          <line x1="940" y1="470" x2="940" y2="690" stroke="#3b4a63" stroke-width="18"/><line x1="940" y1="470" x2="940" y2="690" stroke="#11192b" stroke-width="6"/>
+          <!-- üst bağlantı galerisi -->
+          <line x1="470" y1="250" x2="700" y2="250" stroke="#3b4a63" stroke-width="16"/><line x1="470" y1="250" x2="700" y2="250" stroke="#11192b" stroke-width="5"/>
+          <!-- havalandırma kuyusu -->
+          <line x1="1240" y1="470" x2="1240" y2="160" stroke="#3b4a63" stroke-width="16"/><line x1="1240" y1="470" x2="1240" y2="160" stroke="#11192b" stroke-width="5"/>
+        </g>
+
+        <!-- portal işareti -->
+        <g stroke="#5b6b86" stroke-width="3" fill="none">
+          <path d="M100,110 L120,84 L140,110"/>
+        </g>
+
+        <!-- ===== BÖLGE ETİKETLERİ (makro) ===== -->
+        <g class="layer-macro-only" fill="#64748b" font-size="17" font-weight="700">
+          <text x="150" y="200">PORTAL / RAMPA</text>
+          <text x="500" y="225">ÜRETİM AYAĞI 1-2</text>
+          <text x="560" y="540">NAKLİYE ANA GALERİSİ</text>
+          <text x="980" y="715">ÜRETİM AYAĞI 3</text>
+          <text x="1150" y="150">HAVALANDIRMA</text>
+        </g>
+
+        <!-- ===== ARAÇLAR (LH517) — JS ile basılır ===== -->
+        <g id="vehicles"></g>
+      </g>
+    </svg>
+
+    <!-- Kontroller -->
+    <div class="controls">
+      <button onclick="zoomBtn(1.6)" title="Yakınlaştır">+</button>
+      <button onclick="zoomBtn(0.625)" title="Uzaklaştır">−</button>
+      <button class="wide" onclick="resetView()" title="Tüm maden">⤢ Genel Görünüm</button>
+    </div>
+    <div class="hint">Tekerlekle zoom · sürükle pan · araca tıkla → odaklan</div>
+
+    <!-- Araç iç detay paneli (sub-view) -->
+    <div class="subview" id="subview">
+      <div class="sv-head">
+        <h3 id="sv-name">—</h3>
+        <span class="sv-badge bg-ok" id="sv-badge">NORMAL</span>
+      </div>
+      <div class="sv-sub" id="sv-zone">—</div>
+      <div class="sv-metric"><span class="l">🌡 Motor Sıcaklığı</span><span class="v" id="sv-temp">—</span></div>
+      <div class="sv-metric"><span class="l">🛢 Hidrolik Basınç</span><span class="v" id="sv-pres">—</span></div>
+      <div class="sv-metric"><span class="l">🪣 Kova Durumu</span><span class="v" id="sv-bucket">—</span></div>
+      <div class="sv-metric"><span class="l">📳 Titreşim</span><span class="v" id="sv-vib">—</span></div>
+      <div class="sv-metric"><span class="l">💨 Metan (CH₄)</span><span class="v" id="sv-gas">—</span></div>
+      <div class="sv-foot">Mock veri · 2 sn'de bir güncellenir</div>
+    </div>
+  </div>
+
+<script>
+/* ============================================================================
+   1) SERVICE KATMANI  (veri kaynağı — görselden bağımsız, izole)
+   ----------------------------------------------------------------------------
+   Şu an mock üretiyor. Gerçek sisteme geçişte yalnızca _tick() içeriğini
+   fetch('/dashboard/latest-all') veya MQTT onMessage ile değiştirmek yeterli;
+   abone olan görsel katman (view) hiç değişmeden çalışmaya devam eder.
+   ============================================================================ */
+const MineDataService = (() => {
+  // Araçlar + harita konumları (world koordinatı)
+  const vehicles = [
+    { id:"LH517-01", x:470, y:470, zone:"Nakliye Ana Galerisi" },
+    { id:"LH517-02", x:700, y:250, zone:"Üretim Ayağı 1" },
+    { id:"LH517-03", x:940, y:690, zone:"Üretim Ayağı 3" },
+    { id:"LH517-04", x:1120, y:470, zone:"Havalandırma Yakını" },
+  ];
+  const BUCKET = ["Boş","Yükleniyor","Dolu","Boşaltılıyor"];
+  const listeners = [];
+  const rnd = (a,b)=> a + Math.random()*(b-a);
+
+  // her aracın sensör durumunu başlat
+  vehicles.forEach(v => v.sensors = {
+    motorSicaklik: rnd(72,86), hidrolikBasinc: rnd(250,275),
+    kovaDurum: "Boş", titresim: rnd(2,4), metan: rnd(0.1,0.5),
+  });
+
+  function _tick() {
+    vehicles.forEach(v => {
+      const s = v.sensors;
+      // rastgele yürüyüş (gerçekçi dalgalanma)
+      s.motorSicaklik = clamp(s.motorSicaklik + rnd(-4,5), 65, 118);
+      s.hidrolikBasinc = clamp(s.hidrolikBasinc + rnd(-12,12), 195, 305);
+      s.titresim = clamp(s.titresim + rnd(-1.2,1.4), 0.3, 11);
+      s.metan = clamp(s.metan + rnd(-0.3,0.35), 0.05, 2.6);
+      s.kovaDurum = BUCKET[Math.floor(Math.random()*BUCKET.length)];
+    });
+    emit();
+  }
+  function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+  function snapshot(){ return JSON.parse(JSON.stringify(vehicles)); }
+  function emit(){ const snap = snapshot(); listeners.forEach(fn => fn(snap)); }
+
+  return {
+    subscribe(fn){ listeners.push(fn); fn(snapshot()); },
+    start(){ _tick(); return setInterval(_tick, 2000); },   // ← 2 sn periyot
+    getVehicles(){ return snapshot(); },
+    // GELECEK: connectMQTT(brokerUrl){...}  /  connectAPI(baseUrl){...}
+  };
+})();
+
+/* ============================================================================
+   2) DURUM DEĞERLENDİRME (sensör → renk/durum)
+   ============================================================================ */
+function vehicleStatus(s){
+  if (s.metan >= 1.5 || s.motorSicaklik >= 100 || s.titresim >= 8) return "alarm";
+  if (s.metan >= 1.0 || s.motorSicaklik >= 92  || s.titresim >= 5) return "warn";
+  return "ok";
+}
+const COLOR = { ok:"#22c55e", warn:"#f59e0b", alarm:"#ef4444" };
+const FILL  = { ok:"#14532d", warn:"#3a2a12", alarm:"#3a1414" };
+
+/* ============================================================================
+   3) GÖRSEL KATMAN (SVG + D3 zoom/pan + LOD)
+   ============================================================================ */
+const svg = d3.select("#map");
+const world = d3.select("#world");
+const mapNode = svg.node();
+
+// LOD eşikleri (zoom ölçeği k)
+const LOD = { MID:1.6, DETAIL:3.0 };
+let latest = MineDataService.getVehicles();
+let focusedId = null;
+
+// --- Araç ikonlarını bir kez oluştur (üstten görünüm LHD: gövde + kova + eklem) ---
+const vg = d3.select("#vehicles");
+latest.forEach(v => {
+  const g = vg.append("g").attr("class","veh").attr("transform",`translate(${v.x},${v.y})`)
+              .attr("data-id", v.id).on("click", () => focusVehicle(v.id));
+  // makro: küçük nokta
+  g.append("circle").attr("class","layer-macro-only veh-dot").attr("r",9)
+    .attr("fill", COLOR.ok).attr("stroke","#0a0f1c").attr("stroke-width",2);
+  // mid+: LH517 ikonu
+  const icon = g.append("g").attr("class","layer-mid").attr("transform","rotate(0)");
+  icon.append("rect").attr("class","veh-body").attr("x",-26).attr("y",-11).attr("width",36).attr("height",22)
+      .attr("rx",4).attr("fill",FILL.ok).attr("stroke",COLOR.ok).attr("stroke-width",2.5);
+  icon.append("rect").attr("x",-4).attr("y",-9).attr("width",6).attr("height",18).attr("fill","#475569"); // eklem
+  icon.append("path").attr("d","M10,-11 L26,-7 L26,7 L10,11 Z").attr("class","veh-body")
+      .attr("fill",FILL.ok).attr("stroke",COLOR.ok).attr("stroke-width",2.5); // kova
+  // detay: etiket
+  g.append("text").attr("class","layer-detail").attr("x",0).attr("y",-20).attr("text-anchor","middle")
+    .attr("fill","#cbd5e1").attr("font-size",13).attr("font-weight",700).text(v.id);
+});
+
+// --- D3 zoom/pan ---
+const zoom = d3.zoom().scaleExtent([0.8, 8]).on("zoom", (e) => {
+  world.attr("transform", e.transform);
+  onZoom(e.transform);
+});
+svg.call(zoom);
+
+function onZoom(t){
+  const k = t.k;
+  document.getElementById("hud-k").textContent = k.toFixed(1)+"×";
+  let lod = "macro";
+  if (k >= LOD.DETAIL) lod = "detail";
+  else if (k >= LOD.MID) lod = "mid";
+  mapNode.setAttribute("data-lod", lod);
+  document.getElementById("hud-lod").textContent =
+    lod==="detail" ? "MİKRO (araç içi)" : lod==="mid" ? "ORTA (araçlar)" : "MAKRO";
+
+  // LOD-detay: viewport merkezindeki araca otomatik odaklan → sub-view aç
+  if (k >= LOD.DETAIL) {
+    const [cx,cy] = t.invert([700,450]);            // ekran merkezinin world karşılığı
+    let nearest=null, best=1e9;
+    latest.forEach(v => { const d=Math.hypot(v.x-cx, v.y-cy); if(d<best){best=d; nearest=v;} });
+    if (nearest && best < 170) openSubview(nearest.id);
+    else closeSubview();
+  } else {
+    closeSubview();
+  }
+}
+
+// Araca tıkla → yumuşak zoom (D3 transition)
+function focusVehicle(id){
+  const v = latest.find(x => x.id===id); if(!v) return;
+  const k = 3.6;
+  const t = d3.zoomIdentity.translate(700 - v.x*k, 450 - v.y*k).scale(k);
+  svg.transition().duration(700).call(zoom.transform, t);
+}
+function resetView(){ svg.transition().duration(700).call(zoom.transform, d3.zoomIdentity); }
+function zoomBtn(f){ svg.transition().duration(250).call(zoom.scaleBy, f); }
+
+/* ============================================================================
+   4) VERİ → GÖRSEL bağlama (Service'e abone)
+   ============================================================================ */
+function applyData(snap){
+  latest = snap;
+  snap.forEach(v => {
+    const st = vehicleStatus(v.sensors);
+    const g = vg.select(`[data-id="${v.id}"]`);
+    g.select(".veh-dot").attr("fill", COLOR[st]);
+    g.selectAll(".veh-body").attr("fill", FILL[st]).attr("stroke", COLOR[st]);
+  });
+  if (focusedId) fillSubview(focusedId);
+}
+
+function openSubview(id){ if(focusedId!==id){ focusedId=id; fillSubview(id);} document.getElementById("subview").classList.add("open"); }
+function closeSubview(){ focusedId=null; document.getElementById("subview").classList.remove("open"); }
+
+function fillSubview(id){
+  const v = latest.find(x => x.id===id); if(!v) return;
+  const s = v.sensors, st = vehicleStatus(s);
+  const $ = i => document.getElementById(i);
+  $("sv-name").textContent = v.id;
+  $("sv-zone").textContent = v.zone;
+  const badge = $("sv-badge");
+  badge.textContent = st==="alarm"?"ALARM":st==="warn"?"DİKKAT":"NORMAL";
+  badge.className = "sv-badge " + (st==="alarm"?"bg-alarm":st==="warn"?"bg-warn":"bg-ok");
+  const setv=(id,val,cls)=>{ const e=$(id); e.textContent=val; e.className="v "+(cls||""); };
+  setv("sv-temp", s.motorSicaklik.toFixed(1)+" °C", s.motorSicaklik>=100?"alarm":s.motorSicaklik>=92?"warn":"ok");
+  setv("sv-pres", s.hidrolikBasinc.toFixed(0)+" bar", (s.hidrolikBasinc<210||s.hidrolikBasinc>295)?"warn":"ok");
+  setv("sv-bucket", s.kovaDurum, "");
+  setv("sv-vib", s.titresim.toFixed(1)+" mm/s", s.titresim>=8?"alarm":s.titresim>=5?"warn":"ok");
+  setv("sv-gas", "%"+s.metan.toFixed(2), s.metan>=1.5?"alarm":s.metan>=1?"warn":"ok");
+}
+
+/* ============================================================================
+   5) BAŞLAT
+   ============================================================================ */
+MineDataService.subscribe(applyData);
+MineDataService.start();
+onZoom(d3.zoomIdentity);
+</script>
+</body>
+</html>

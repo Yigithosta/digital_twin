@@ -1,0 +1,82 @@
+{
+  "name": "Anomali Alarm ve Raporlama (İP-5)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "anomali-alarm",
+        "httpMethod": "POST",
+        "responseMode": "onReceived"
+      },
+      "id": "wh1",
+      "name": "Anomali Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "m1",
+              "name": "mesaj",
+              "type": "string",
+              "value": "={{ '⚠ ANOMALİ: ' + ($json.equipment_id || '-') + ' | Skor: ' + ($json.anomaly_score || $json.gas || '-') + ' | ' + ($json.description || '-') + ' | ' + ($json.time || '') }}"
+            }
+          ]
+        }
+      },
+      "id": "set1",
+      "name": "Alarm Mesajı Oluştur",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/report/anomali-pdf",
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      },
+      "id": "pdf1",
+      "name": "PDF Raporu Al (FastAPI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 180]
+    },
+    {
+      "parameters": {
+        "fromEmail": "alarm@cankayazilim.local",
+        "toEmail": "yigithosta@icloud.com",
+        "subject": "={{ '[MADEN ALARM] ' + ($json.equipment_id || 'Ekipman') }}",
+        "text": "={{ $('Alarm Mesajı Oluştur').item.json.mesaj }}",
+        "options": { "attachments": "data" }
+      },
+      "id": "mail1",
+      "name": "E-posta Gönder (SMTP)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [960, 180],
+      "notes": "SMTP kimlik bilgisi n8n arayüzünden eklenmeli: Credentials > SMTP (ör. Gmail uygulama şifresi)."
+    },
+    {
+      "parameters": {
+        "text": "={{ $('Alarm Mesajı Oluştur').item.json.mesaj }}",
+        "otherOptions": {}
+      },
+      "id": "slack1",
+      "name": "Slack Bildirimi",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [720, 420],
+      "notes": "Slack credential (OAuth veya Webhook URL) n8n arayüzünden eklenmeli."
+    }
+  ],
+  "connections": {
+    "Anomali Webhook":      { "main": [[ { "node": "Alarm Mesajı Oluştur", "type": "main", "index": 0 } ]] },
+    "Alarm Mesajı Oluştur": { "main": [[ { "node": "PDF Raporu Al (FastAPI)", "type": "main", "index": 0 },
+                                          { "node": "Slack Bildirimi", "type": "main", "index": 0 } ]] },
+    "PDF Raporu Al (FastAPI)": { "main": [[ { "node": "E-posta Gönder (SMTP)", "type": "main", "index": 0 } ]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

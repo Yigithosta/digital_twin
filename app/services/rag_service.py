@@ -13,18 +13,50 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-COLLECTION = "sandvik_knowledge"
-VECTOR_SIZE = 384
+# ── Embedding backend seçimi ─────────────────────────────────────────────────
+# Varsayılan: all-MiniLM-L6-v2 (yerel, ücretsiz, dışa bağımsız — "milli yazılım"
+# hedefiyle uyumlu). İstenirse EMBEDDING_BACKEND=openai + OPENAI_API_KEY ile
+# raporda anılan text-embedding-3-small modeline geçilir (1536 boyut, ayrı
+# koleksiyon). Mimari her iki backend'i de destekler.
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "local").lower()
 
-_encoder: SentenceTransformer = None
+if EMBEDDING_BACKEND == "openai" and os.getenv("OPENAI_API_KEY"):
+    COLLECTION = "sandvik_knowledge_openai"
+    VECTOR_SIZE = 1536
+else:
+    EMBEDDING_BACKEND = "local"
+    COLLECTION = "sandvik_knowledge"
+    VECTOR_SIZE = 384
+
+_encoder = None
 _qdrant: QdrantClient = None
 _indexed = False
+
+
+class _Vec(list):
+    def tolist(self):
+        return list(self)
+
+
+class _OpenAIEncoder:
+    """text-embedding-3-small için minimal istemci (ek paket gerekmez)."""
+    def encode(self, text: str):
+        import urllib.request
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/embeddings",
+            data=json.dumps({"model": "text-embedding-3-small", "input": text}).encode(),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"},
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return _Vec(json.loads(r.read())["data"][0]["embedding"])
 
 
 def _get_encoder():
     global _encoder
     if _encoder is None:
-        _encoder = SentenceTransformer("all-MiniLM-L6-v2")
+        _encoder = _OpenAIEncoder() if EMBEDDING_BACKEND == "openai" \
+                   else SentenceTransformer("all-MiniLM-L6-v2")
     return _encoder
 
 
@@ -154,6 +186,22 @@ KNOWLEDGE_BASE = [
         "part_numbers": ["56205923", "56013070", "56039605"],
         "failure_mode": "yangın, güvenlik sistemi",
     },
+    {
+        "id": "lh517-isg-metan-01",
+        "category": "Güvenlik (İSG)",
+        "title": "Yeraltı Metan (CH4) Gazı Güvenlik Eşikleri ve Müdahale",
+        "content": "Metan gazı güvenlik limitleri (% hacim CH4): %1.0 üzeri UYARI — havalandırma kontrol edilmeli. %1.5 üzeri TEHLİKE — tüm elektrikli ekipman durdurulmalı, havalandırma artırılmalı. %2.0 üzeri KRİTİK — patlama riski (patlama aralığı %5-15), personel derhal tahliye edilmelidir. Metan sensörleri mutlak eşiklerle izlenir; anomali modelinden bağımsız İSG katmanıdır. Acil durdurma butonu (Emergency Stop) ile ekipman anında kapatılır.",
+        "part_numbers": ["56013070"],
+        "failure_mode": "metan kaçağı, İSG",
+    },
+    {
+        "id": "lh517-spec-01",
+        "category": "Teknik Özellikler",
+        "title": "LH517 Kova Kapasitesi ve Genel Özellikler",
+        "content": "Sandvik LH517 yeraltı yükleyici (LHD) taşıma kapasitesi 17.2 ton (tramming capacity). Kova (bucket) hacmi 5.4 - 8.8 m³ arası seçeneklidir. Motor gücü 256 kW, çalışma ağırlığı yaklaşık 44.5 ton. Yükleme çevrimi: kova doldurma, taşıma, boşaltma. Kova aşınma plakaları 500 saatte kontrol edilmelidir. Yük sensörü (Weighing System P/N 56029901) kova doluluk durumunu izler.",
+        "part_numbers": ["56029901"],
+        "failure_mode": "kapasite, yükleme",
+    },
 ]
 
 
@@ -164,11 +212,8 @@ def index_knowledge():
     q = _get_qdrant()
     enc = _get_encoder()
 
-    # Önce koleksiyonun dolu olup olmadığını kontrol et
-    info = q.get_collection(COLLECTION)
-    if info.points_count >= len(KNOWLEDGE_BASE):
-        _indexed = True
-        return
+    # Küratörlü bloklar sabit id (1..N) ile her açılışta upsert edilir (idempotent);
+    # ingest edilen doküman parçaları (UUID id) etkilenmez.
 
     points = []
     for i, doc in enumerate(KNOWLEDGE_BASE):
@@ -205,7 +250,7 @@ def query(question: str, limit: int = 3) -> List[Dict]:
         collection_name=COLLECTION,
         query=vector,
         limit=limit,
-        score_threshold=0.3,
+        score_threshold=0.25,
     )
 
     return [

@@ -432,7 +432,60 @@
 
   .loader { display: none; color: #64748b; font-size: 0.8rem; text-align: center; padding: 20px; }
   .spinner { color: #64748b; text-align: center; padding: 20px; font-size: 0.8rem; }
+
+  /* ===== DİJİTAL İKİZ — birleşik LOD sahnesi (Maden → Araç → Bileşen) ===== */
+  .tw-hero { background:#0c1320; border:1px solid #1e3a5f; border-radius:14px; padding:14px 16px; margin-bottom:24px; }
+  .tw-bar { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .tw-bar .tw-title { font-size:0.8rem; font-weight:700; color:#3b82f6; text-transform:uppercase; letter-spacing:1px; }
+  .tw-crumb { font-size:0.8rem; color:#64748b; margin-right:auto; }
+  .tw-crumb b { color:#93c5fd; }
+  .tw-sel { background:#0f172a; border:1px solid #334155; color:#e2e8f0; padding:7px 12px; border-radius:8px; font-size:0.82rem; cursor:pointer; }
+  .tw-badge { font-size:0.72rem; font-weight:800; padding:4px 12px; border-radius:99px; }
+  .tw-ok{background:#14532d;color:#86efac;} .tw-warn{background:#713f12;color:#fde68a;} .tw-alarm{background:#7f1d1d;color:#fca5a5;} .tw-gas{background:#7c2d12;color:#fdba74;}
+
+  .dt-stage { position:relative; }
+  #dt-map { width:100%; height:560px; background:#0a0f1c; border-radius:10px; cursor:grab; display:block; }
+  #dt-map:active { cursor:grabbing; }
+
+  /* LOD katman görünürlüğü */
+  .dt-mid, .dt-detail, .dt-macro-dot, .dt-map-lbl { transition:opacity .35s; }
+  #dt-map[data-lod="macro"] .dt-mid,
+  #dt-map[data-lod="macro"] .dt-detail,
+  #dt-map[data-lod="mid"]   .dt-detail { opacity:0; pointer-events:none; }
+  #dt-map[data-lod="mid"]    .dt-macro-dot,
+  #dt-map[data-lod="detail"] .dt-macro-dot,
+  #dt-map[data-lod="detail"] .dt-mid { opacity:0; pointer-events:none; }
+  #dt-map[data-lod="detail"] .dt-map-lbl { opacity:0.25; }
+
+  .dt-veh { cursor:pointer; }
+  .dt-mbody { transition:fill .4s, stroke .4s; }
+  .dt-l { font-size:11px; fill:#64748b; letter-spacing:.3px; }
+  .dt-v { font-size:17px; font-weight:800; }
+  .dt-part { fill:transparent; cursor:pointer; }
+  .dt-part:hover { fill:rgba(59,130,246,.13); }
+
+  .dt-hud { position:absolute; top:10px; left:14px; font-size:0.72rem; color:#64748b; background:#0c1320cc; padding:5px 10px; border-radius:8px; }
+  .dt-hud b { color:#93c5fd; }
+  .dt-hint { position:absolute; bottom:10px; right:14px; font-size:0.68rem; color:#475569; background:#0c1320cc; padding:5px 9px; border-radius:8px; }
+  .dt-ctl { position:absolute; left:12px; bottom:12px; display:flex; gap:6px; }
+  .dt-ctl button { min-width:36px; height:36px; padding:0 12px; border-radius:9px; border:1px solid #334155; background:#111827dd; color:#e2e8f0; font-size:1rem; font-weight:700; cursor:pointer; }
+  .dt-ctl button:hover { background:#1e293b; }
+
+  /* araç/bileşen paneli */
+  .dt-panel { position:absolute; top:12px; right:12px; width:256px; background:#111827f2; border:1px solid #2563eb; border-radius:12px; padding:14px;
+              transform:translateX(290px); opacity:0; transition:.4s; max-height:calc(100% - 24px); overflow-y:auto; }
+  .dt-panel.open { transform:none; opacity:1; }
+  .dt-comp { background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:8px 10px; margin-bottom:6px; cursor:pointer; transition:border-color .2s; }
+  .dt-comp:hover, .dt-comp.sel { border-color:#3b82f6; }
+  .dt-comp .c-h { display:flex; justify-content:space-between; font-size:0.7rem; color:#94a3b8; font-weight:700; text-transform:uppercase; }
+  .dt-comp .c-v { font-size:0.82rem; margin-top:3px; display:flex; gap:12px; flex-wrap:wrap; }
+  .dt-rul-track { height:6px; background:#1e293b; border-radius:99px; overflow:hidden; margin-top:4px; }
+  .dt-rul-fill { height:100%; border-radius:99px; transition:width .6s, background .4s; }
+  .dt-pbtn { flex:1; padding:8px; border-radius:8px; font-size:0.74rem; font-weight:700; cursor:pointer; border:1px solid #334155; background:#0f172a; color:#e2e8f0; }
+  .dt-pbtn.a { border-color:#7f1d1d; color:#fca5a5; }
+  .dt-pbtn.g { border-color:#7c2d12; color:#fdba74; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 </head>
 <body>
 
@@ -475,6 +528,69 @@
     <div class="isg-text">
       <div class="it-title" id="isg-title">İSG METAN ALARMI</div>
       <div class="it-sub" id="isg-sub"></div>
+    </div>
+  </div>
+
+  <!-- ===== DİJİTAL İKİZ — birleşik LOD sahnesi ===== -->
+  <div class="tw-hero">
+    <div class="tw-bar">
+      <span class="tw-title">🛰 Dijital İkiz</span>
+      <span class="tw-crumb" id="dt-crumb">🗺 <b>Maden Sahası</b></span>
+      <select class="tw-sel" id="dt-eq" onchange="if(this.value) dtFocus(this.value)">
+        <option value="">— ekipmana git —</option>
+        <option value="conveyor_01">🔗 Konveyör Bandı</option>
+        <option value="pump_01">💧 Pompa Ünitesi</option>
+        <option value="crusher_01">🪨 Kırıcı Makinesi</option>
+      </select>
+      <span class="tw-badge tw-ok" id="dt-status">● —</span>
+    </div>
+
+    <div class="dt-stage">
+      <svg id="dt-map" viewBox="0 0 1300 760" preserveAspectRatio="xMidYMid meet" data-lod="macro" role="img"
+           aria-label="Maden sahası dijital ikizi: zoom yaptıkça tüneller, araçlar ve araç bileşenleri detaylanır">
+        <g id="dt-world">
+          <rect x="0" y="0" width="1300" height="760" fill="#0a0f1c"/>
+          <!-- tünel ağı -->
+          <g fill="none">
+            <polyline points="120,110 300,300 300,470" stroke="#3b4a63" stroke-width="22" stroke-linecap="round"/>
+            <polyline points="120,110 300,300 300,470" stroke="#11192b" stroke-width="8" stroke-linecap="round"/>
+            <line x1="300" y1="470" x2="1160" y2="470" stroke="#3b4a63" stroke-width="24"/><line x1="300" y1="470" x2="1160" y2="470" stroke="#11192b" stroke-width="9"/>
+            <line x1="700" y1="470" x2="700" y2="280" stroke="#3b4a63" stroke-width="18"/><line x1="700" y1="470" x2="700" y2="280" stroke="#11192b" stroke-width="6"/>
+            <line x1="950" y1="470" x2="950" y2="600" stroke="#3b4a63" stroke-width="18"/><line x1="950" y1="470" x2="950" y2="600" stroke="#11192b" stroke-width="6"/>
+            <line x1="1160" y1="470" x2="1160" y2="180" stroke="#3b4a63" stroke-width="16"/><line x1="1160" y1="470" x2="1160" y2="180" stroke="#11192b" stroke-width="5"/>
+          </g>
+          <g class="dt-map-lbl" fill="#64748b" font-size="17" font-weight="700">
+            <text x="150" y="200">PORTAL / RAMPA</text>
+            <text x="320" y="510">NAKLİYE ANA GALERİSİ</text>
+            <text x="610" y="255">ÜRETİM AYAĞI</text>
+            <text x="980" y="625">ÜRETİM AYAĞI</text>
+            <text x="1075" y="160">HAVALANDIRMA</text>
+          </g>
+          <g id="dt-vehicles"></g>
+        </g>
+      </svg>
+
+      <div class="dt-hud">Zoom <b id="dt-k">1.0×</b> · <b id="dt-lod">MAKRO</b></div>
+      <div class="dt-ctl">
+        <button onclick="dtZoomBy(1.5)" title="Yakınlaştır">+</button>
+        <button onclick="dtZoomBy(0.667)" title="Uzaklaştır">−</button>
+        <button onclick="dtReset()" title="Tüm maden">⤢ Genel</button>
+      </div>
+      <div class="dt-hint">tekerlek: zoom · sürükle: pan · araca/parçaya tıkla: yakınlaş</div>
+
+      <!-- araç / bileşen paneli -->
+      <div class="dt-panel" id="dt-panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+          <h3 style="font-size:0.95rem;font-weight:800" id="dt-p-name">—</h3>
+          <span class="tw-badge tw-ok" id="dt-p-badge">—</span>
+        </div>
+        <div style="font-size:0.68rem;color:#64748b;margin-bottom:10px" id="dt-p-zone">—</div>
+        <div id="dt-p-rul" style="margin-bottom:10px"></div>
+        <div id="dt-p-comps"></div>
+      </div>
+    </div>
+    <div style="font-size:0.7rem;color:#475569;text-align:center;margin-top:8px">
+      Hiyerarşik LOD: <b style="color:#94a3b8">Maden → Araç → Bileşen</b> · tüm veriler canlı (MQTT → API) · bileşene tıklayınca sensörüne yakınlaşır
     </div>
   </div>
 
@@ -533,65 +649,26 @@
     </div>
   </div>
 
-  <!-- Grafik + Aksiyon -->
-  <div class="bottom-row">
-
-    <!-- Grafik -->
-    <div class="chart-card">
-      <div class="section-title">Zaman Serisi Grafiği</div>
-      <div class="chart-controls">
-        <select id="chart-eq">
-          <option value="conveyor_01">Konveyör Bandı</option>
-          <option value="pump_01">Pompa Ünitesi</option>
-          <option value="crusher_01">Kırıcı Makinesi</option>
-        </select>
-        <select id="chart-metric">
-          <option value="temperature">Sıcaklık (°C)</option>
-          <option value="vibration">Titreşim (mm/s)</option>
-          <option value="pressure">Basınç (bar)</option>
-          <option value="current">Akım (A)</option>
-          <option value="gas">Metan (% CH4)</option>
-          <option value="anomaly_score">Anomali Skoru</option>
-        </select>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="timeChart"></canvas>
-      </div>
-    </div>
-
-    <!-- Aksiyon paneli -->
-    <div class="action-card">
-      <div class="section-title">Canlı Test — Isolation Forest</div>
-
-      <select class="eq-select" id="test-eq">
-        <option value="conveyor_01">🔗 Konveyör Bandı</option>
-        <option value="pump_01">💧 Pompa Ünitesi</option>
-        <option value="crusher_01">🪨 Kırıcı Makinesi</option>
+  <!-- Grafik (tam genişlik) -->
+  <div class="chart-card" style="margin-bottom:16px">
+    <div class="section-title">Zaman Serisi Grafiği</div>
+    <div class="chart-controls">
+      <select id="chart-eq">
+        <option value="conveyor_01">Konveyör Bandı</option>
+        <option value="pump_01">Pompa Ünitesi</option>
+        <option value="crusher_01">Kırıcı Makinesi</option>
       </select>
-
-      <button class="btn-anomaly" onclick="triggerAnomaly()">
-        ⚠ ANOMALİ TETİKLE
-      </button>
-
-      <button class="btn-normal" onclick="triggerNormal()">
-        ✓ Normal Okuma Al
-      </button>
-
-      <button class="btn-normal" onclick="triggerGas()" style="border-color:#7c2d12;color:#fdba74">
-        💨 METAN KAÇAĞI Tetikle (İSG)
-      </button>
-
-      <div class="result-box" id="result-box">
-        <div style="color:#64748b;text-align:center;padding:10px">
-          Isolation Forest modelini test etmek için anomali tetikleyin.
-        </div>
-      </div>
-
-      <!-- RAG önerileri (anomali sonrası otomatik göster) -->
-      <div class="rag-box" id="rag-inline">
-        <div class="rag-box-title">📚 Sandvik Teknik Öneri</div>
-        <div id="rag-inline-content"></div>
-      </div>
+      <select id="chart-metric">
+        <option value="temperature">Sıcaklık (°C)</option>
+        <option value="vibration">Titreşim (mm/s)</option>
+        <option value="pressure">Basınç (bar)</option>
+        <option value="current">Akım (A)</option>
+        <option value="gas">Metan (% CH4)</option>
+        <option value="anomaly_score">Anomali Skoru</option>
+      </select>
+    </div>
+    <div class="chart-wrap" style="height:280px">
+      <canvas id="timeChart"></canvas>
     </div>
   </div>
 
@@ -648,7 +725,13 @@
 
   <!-- Anomali logu -->
   <div class="log-card">
-    <div class="section-title" style="margin-bottom:14px">Son Anomali Kayıtları</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div class="section-title" style="margin-bottom:0">Son Anomali Kayıtları</div>
+      <a href="/report/anomali-pdf" download
+         style="padding:7px 14px;border:1px solid #2563eb;border-radius:8px;background:#0c1c2e;color:#93c5fd;font-size:0.78rem;font-weight:700;text-decoration:none">
+        📄 PDF Rapor İndir
+      </a>
+    </div>
     <table class="log-table">
       <thead>
         <tr>
@@ -1093,6 +1176,261 @@ document.getElementById('chart-metric').addEventListener('change', updateChart);
 initChart();
 refresh();
 setInterval(refresh, 8000);
+</script>
+
+<!-- ===== DİJİTAL İKİZ — birleşik LOD motoru (Maden ⇄ Araç ⇄ Bileşen) ===== -->
+<script>
+(function(){
+  const API = location.origin;
+  const COL = { ok:"#22c55e", warn:"#f59e0b", alarm:"#ef4444" };
+  const EQ = {
+    conveyor_01:{ ad:"Konveyör Bandı",  ikon:"🔗", bolge:"Nakliye Ana Galerisi",  pos:[450,470], spdFmt:d=>d.speed.toFixed(2)+" m/s" },
+    pump_01:    { ad:"Pompa Ünitesi",   ikon:"💧", bolge:"Üretim Ayağı (Kuzey)",  pos:[700,280], spdFmt:d=>d.speed.toFixed(0)+" rpm" },
+    crusher_01: { ad:"Kırıcı Makinesi", ikon:"🪨", bolge:"Üretim Ayağı (Güney)",  pos:[950,600], spdFmt:d=>d.speed.toFixed(0)+" rpm" },
+  };
+  const S = 0.14;   // araç şemasının dünya ölçeği (820x430 → ~115x60 dünya birimi)
+  const PART = {    // bileşenler: şema-yerel merkez + ad
+    motor:   { c:[657,260], ad:"Motor Bölmesi",  ikon:"⚙️" },
+    hidrolik:{ c:[150,245], ad:"Hidrolik / Kova", ikon:"🛢" },
+    sasi:    { c:[300,300], ad:"Şasi / Yürüyüş",  ikon:"🛞" },
+    ortam:   { c:[480,140], ad:"Kabin / Ortam",   ikon:"💨" },
+  };
+  const CX=650, CY=380, LOD_MID=1.6, LOD_DET=3.2, K_VEH=5.5, K_PART=13;
+  const $ = id => document.getElementById(id);
+  let LATEST={}, FOCUS=null, PARTSEL=null, RULC={};
+
+  /* ---------- durum (dashboard kartlarıyla aynı eşikler) ---------- */
+  const stTemp = d => d.temperature>=80?"alarm":d.temperature>=65?"warn":"ok";
+  const stVib  = d => d.vibration>=8?"alarm":d.vibration>=5?"warn":"ok";
+  const stCur  = d => d.current>=45?"alarm":d.current>=35?"warn":"ok";
+  const stGas  = d => d.gas>=1.5?"alarm":d.gas>=1.0?"warn":"ok";
+  function stAll(d){ if(!d) return "ok";
+    const a=[stTemp(d),stVib(d),stCur(d),stGas(d)];
+    return a.includes("alarm")?"alarm":a.includes("warn")?"warn":"ok"; }
+
+  /* ---------- araç şeması (dünyaya gömülü, ölçekle büyür) ---------- */
+  function schematic(eq){
+    const p=`dt-${eq}`;
+    return `
+      <g id="${p}-cloud" opacity="0"><ellipse cx="480" cy="120" rx="150" ry="42" fill="#10b981" opacity="0.16"/></g>
+      <g id="${p}-mach">
+        <rect x="470" y="232" width="250" height="86" rx="9" fill="#243044" stroke="#3b4a63" stroke-width="2"/>
+        <rect id="${p}-eng" x="606" y="246" width="100" height="58" rx="6" fill="#2d3a52" stroke="#475569" stroke-width="3"/>
+        <g id="${p}-heat" opacity="0">
+          <path d="M616 242 q5 -11 10 0 q5 11 10 0" stroke="#f59e0b" stroke-width="3" fill="none"/>
+          <path d="M648 238 q5 -11 10 0 q5 11 10 0" stroke="#fb923c" stroke-width="3" fill="none"/>
+          <path d="M680 242 q5 -11 10 0 q5 11 10 0" stroke="#f59e0b" stroke-width="3" fill="none"/>
+        </g>
+        <rect x="700" y="214" width="11" height="22" rx="2" fill="#475569"/>
+        <path d="M494 232 L514 184 L568 184 L568 232 Z" fill="#1e293b" stroke="#3b4a63" stroke-width="2"/>
+        <rect x="520" y="194" width="42" height="30" rx="3" fill="#0f1a2e" stroke="#334155"/>
+        <rect x="444" y="256" width="34" height="44" rx="4" fill="#1b2536" stroke="#475569" stroke-width="2"/>
+        <circle cx="461" cy="278" r="7" fill="#64748b"/>
+        <rect x="180" y="246" width="266" height="64" rx="9" fill="#243044" stroke="#3b4a63" stroke-width="2"/>
+        <line id="${p}-boom" x1="232" y1="262" x2="116" y2="214" stroke="#3b4a63" stroke-width="12" stroke-linecap="round"/>
+        <line x1="284" y1="286" x2="178" y2="236" stroke="#475569" stroke-width="7" stroke-linecap="round"/>
+        <path id="${p}-bucket" d="M116 214 L80 234 L78 286 L146 286 L146 230 Z" fill="#2d3a52" stroke="#5b6b86" stroke-width="3"/>
+        <circle id="${p}-wf" cx="288" cy="322" r="44" fill="#0f172a" stroke="#334155" stroke-width="7"/>
+        <circle cx="288" cy="322" r="16" fill="#1e293b" stroke="#475569" stroke-width="3"/>
+        <g id="${p}-spf" stroke="#475569" stroke-width="3"><line x1="288" y1="306" x2="288" y2="338"/><line x1="272" y1="322" x2="304" y2="322"/></g>
+        <circle id="${p}-wr" cx="628" cy="322" r="48" fill="#0f172a" stroke="#334155" stroke-width="7"/>
+        <circle cx="628" cy="322" r="17" fill="#1e293b" stroke="#475569" stroke-width="3"/>
+        <g id="${p}-spr" stroke="#475569" stroke-width="3"><line x1="628" y1="305" x2="628" y2="339"/><line x1="611" y1="322" x2="645" y2="322"/></g>
+      </g>
+      <g><line x1="656" y1="246" x2="656" y2="166" stroke="#334155" stroke-dasharray="4 4"/><circle id="${p}-d-temp" cx="656" cy="270" r="7" fill="#22c55e"/>
+        <rect x="588" y="122" width="180" height="46" rx="8" fill="#111827" stroke="#1e293b"/>
+        <text class="dt-l" x="602" y="141">MOTOR SICAKLIK · AKIM</text>
+        <text class="dt-v" id="${p}-v-temp" x="602" y="161" fill="#22c55e">—</text></g>
+      <g><line x1="210" y1="252" x2="210" y2="176" stroke="#334155" stroke-dasharray="4 4"/><circle id="${p}-d-pres" cx="210" cy="252" r="7" fill="#06b6d4"/>
+        <rect x="134" y="132" width="156" height="46" rx="8" fill="#111827" stroke="#1e293b"/>
+        <text class="dt-l" x="148" y="151">HİDROLİK BASINÇ</text>
+        <text class="dt-v" id="${p}-v-pres" x="148" y="171" fill="#06b6d4">—</text></g>
+      <g><line x1="288" y1="322" x2="330" y2="392" stroke="#334155" stroke-dasharray="4 4"/><circle id="${p}-d-vib" cx="288" cy="322" r="7" fill="#22c55e"/>
+        <rect x="272" y="386" width="178" height="46" rx="8" fill="#111827" stroke="#1e293b"/>
+        <text class="dt-l" x="286" y="405">TİTREŞİM · HIZ</text>
+        <text class="dt-v" id="${p}-v-vib" x="286" y="425" fill="#22c55e">—</text></g>
+      <g><circle id="${p}-d-gas" cx="480" cy="88" r="7" fill="#10b981"/>
+        <rect x="398" y="54" width="164" height="46" rx="8" fill="#111827" stroke="#1e293b"/>
+        <text class="dt-l" x="412" y="73">METAN (CH₄) · İSG</text>
+        <text class="dt-v" id="${p}-v-gas" x="412" y="93" fill="#10b981">—</text></g>
+      <rect class="dt-part" x="588" y="200" width="180" height="130" rx="10" onclick="dtPart('${eq}','motor',event)"><title>Motor Bölmesi</title></rect>
+      <rect class="dt-part" x="66"  y="196" width="240" height="112" rx="10" onclick="dtPart('${eq}','hidrolik',event)"><title>Hidrolik / Kova</title></rect>
+      <rect class="dt-part" x="182" y="250" width="280" height="128" rx="10" onclick="dtPart('${eq}','sasi',event)"><title>Şasi / Yürüyüş</title></rect>
+      <rect class="dt-part" x="398" y="50"  width="184" height="140" rx="10" onclick="dtPart('${eq}','ortam',event)"><title>Kabin / Ortam</title></rect>`;
+  }
+
+  /* ---------- sahneyi kur ---------- */
+  const svg=d3.select("#dt-map"), world=d3.select("#dt-world"), node=svg.node();
+  const vg=d3.select("#dt-vehicles");
+  Object.keys(EQ).forEach(eq=>{
+    const [x,y]=EQ[eq].pos;
+    const g=vg.append("g").attr("data-eq",eq);
+    g.append("circle").attr("class","dt-macro-dot").attr("cx",x).attr("cy",y).attr("r",9)
+      .attr("fill",COL.ok).attr("stroke","#0a0f1c").attr("stroke-width",2)
+      .style("cursor","pointer").on("click",()=>dtFocus(eq));
+    const mid=g.append("g").attr("class","dt-mid dt-veh").attr("transform",`translate(${x},${y})`).on("click",()=>dtFocus(eq));
+    mid.append("rect").attr("class","dt-mbody").attr("x",-26).attr("y",-11).attr("width",36).attr("height",22).attr("rx",4)
+      .attr("fill","#14532d").attr("stroke",COL.ok).attr("stroke-width",2.5);
+    mid.append("rect").attr("x",-4).attr("y",-9).attr("width",6).attr("height",18).attr("fill","#475569");
+    mid.append("path").attr("class","dt-mbody").attr("d","M10,-11 L26,-7 L26,7 L10,11 Z").attr("fill","#14532d").attr("stroke",COL.ok).attr("stroke-width",2.5);
+    mid.append("text").attr("y",-22).attr("text-anchor","middle").attr("fill","#cbd5e1").attr("font-size",13).attr("font-weight",700)
+      .text(EQ[eq].ikon+" "+EQ[eq].ad);
+    const det=g.append("g").attr("class","dt-detail")
+      .attr("transform",`translate(${x},${y}) scale(${S}) translate(-410,-280)`);
+    det.html(schematic(eq));
+  });
+
+  /* ---------- zoom / LOD ---------- */
+  const zoom=d3.zoom().scaleExtent([0.8,22]).on("zoom",e=>{ world.attr("transform",e.transform); onZoom(e.transform); });
+  svg.call(zoom);
+
+  function onZoom(t){
+    $("dt-k").textContent=t.k.toFixed(1)+"×";
+    const lod = t.k>=LOD_DET?"detail":t.k>=LOD_MID?"mid":"macro";
+    node.setAttribute("data-lod",lod);
+    $("dt-lod").textContent = t.k>=9?"BİLEŞEN":lod==="detail"?"ARAÇ":lod==="mid"?"ORTA":"MAKRO";
+
+    if(t.k>=LOD_DET){
+      const [cx,cy]=t.invert([CX,CY]); let near=null,best=1e9;
+      Object.keys(EQ).forEach(eq=>{ const d=Math.hypot(EQ[eq].pos[0]-cx,EQ[eq].pos[1]-cy); if(d<best){best=d;near=eq;} });
+      if(near && best<220){ if(FOCUS!==near){ FOCUS=near; $("dt-eq").value=near; openPanel(near); } }
+      else { FOCUS=null; closePanel(); }
+    } else { FOCUS=null; PARTSEL=null; closePanel(); }
+    crumb();
+  }
+  function crumb(){
+    let h="🗺 <b>Maden Sahası</b>";
+    if(FOCUS) h+=` › <b>${EQ[FOCUS].ikon} ${EQ[FOCUS].ad}</b>`;
+    if(FOCUS&&PARTSEL) h+=` › <b>${PART[PARTSEL].ikon} ${PART[PARTSEL].ad}</b>`;
+    $("dt-crumb").innerHTML=h;
+  }
+  function zoomTo(wx,wy,k){ svg.transition().duration(700).call(zoom.transform, d3.zoomIdentity.translate(CX-wx*k, CY-wy*k).scale(k)); }
+  window.dtFocus  = eq => { PARTSEL=null; zoomTo(EQ[eq].pos[0], EQ[eq].pos[1], K_VEH); };
+  window.dtReset  = () => { PARTSEL=null; svg.transition().duration(700).call(zoom.transform, d3.zoomIdentity); $("dt-eq").value=""; };
+  window.dtZoomBy = f  => svg.transition().duration(250).call(zoom.scaleBy, f);
+  window.dtPart   = (eq,part,ev) => {
+    if(ev) ev.stopPropagation();
+    PARTSEL=part;
+    const [lx,ly]=PART[part].c, [vx,vy]=EQ[eq].pos;
+    zoomTo(vx+(lx-410)*S, vy+(ly-280)*S, K_PART);
+    if(FOCUS===eq) fillPanel(eq);
+    crumb();
+  };
+
+  /* ---------- panel ---------- */
+  function openPanel(eq){ $("dt-panel").classList.add("open"); fillPanel(eq); loadRul(eq); }
+  function closePanel(){ $("dt-panel").classList.remove("open"); }
+
+  function fillPanel(eq){
+    const d=LATEST[eq]; if(!d) return;
+    const st=stAll(d);
+    $("dt-p-name").textContent=EQ[eq].ikon+" "+EQ[eq].ad;
+    $("dt-p-zone").textContent=EQ[eq].bolge+" · "+eq;
+    const bd=$("dt-p-badge");
+    bd.textContent = d.gas>=1.5?"İSG: METAN":st==="alarm"?"ALARM":st==="warn"?"DİKKAT":"NORMAL";
+    bd.className = "tw-badge "+(d.gas>=1.5?"tw-gas":st==="alarm"?"tw-alarm":st==="warn"?"tw-warn":"tw-ok");
+    const v=(txt,s)=>`<b style="color:${COL[s]}">${txt}</b>`;
+    const comp=(key,html,s)=>`
+      <div class="dt-comp ${PARTSEL===key?'sel':''}" onclick="dtPart('${eq}','${key}',event)">
+        <div class="c-h"><span>${PART[key].ikon} ${PART[key].ad}</span><span style="color:${COL[s]}">●</span></div>
+        <div class="c-v">${html}</div>
+      </div>`;
+    $("dt-p-comps").innerHTML =
+      comp("motor",    v(d.temperature.toFixed(1)+" °C",stTemp(d))+v(d.current.toFixed(0)+" A",stCur(d)), [stTemp(d),stCur(d)].includes("alarm")?"alarm":[stTemp(d),stCur(d)].includes("warn")?"warn":"ok")+
+      comp("hidrolik", `<b style="color:#06b6d4">${d.pressure.toFixed(1)+" bar"}</b>`, "ok")+
+      comp("sasi",     v(d.vibration.toFixed(1)+" mm/s",stVib(d))+`<b style="color:#94a3b8">${EQ[eq].spdFmt(d)}</b>`, stVib(d))+
+      comp("ortam",    v("%"+(d.gas||0).toFixed(2)+" CH₄",stGas(d)), stGas(d));
+  }
+
+  async function loadRul(eq){
+    const c=RULC[eq];
+    if(c && Date.now()-c.t<30000){ renderRul(eq); return; }
+    try{
+      const r=await fetch(`${API}/predict/rul/${eq}?senaryo=normal`);
+      RULC[eq]={t:Date.now(), ...(await r.json())};
+    }catch(e){ RULC[eq]={t:Date.now()}; }
+    if(FOCUS===eq) renderRul(eq);
+  }
+  function renderRul(eq){
+    const r=RULC[eq]; const el=$("dt-p-rul");
+    if(!r || r.saglik_yuzde===undefined){ el.innerHTML=""; return; }
+    const c=r.renk==="kirmizi"?COL.alarm:r.renk==="sari"?COL.warn:COL.ok;
+    el.innerHTML=`
+      <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#94a3b8">
+        <span>🔮 Sağlık (LSTM RUL)</span><b style="color:${c}">%${Math.round(r.saglik_yuzde)} · ~${r.rul_saat} sa</b>
+      </div>
+      <div class="dt-rul-track"><div class="dt-rul-fill" style="width:${Math.min(100,r.saglik_yuzde)}%;background:${c}"></div></div>`;
+  }
+
+  window.dtTrigger = async kind => {
+    if(!FOCUS) return;
+    const q = kind==="gas" ? "force_gas=true" : "force_anomaly=true";
+    try{ await fetch(`${API}/sensors/simulate/${FOCUS}?${q}`,{method:"POST"}); }catch(e){}
+    setTimeout(poll, 700);
+  };
+
+  /* ---------- canlı veri → görsel ---------- */
+  function paint(){
+    Object.keys(EQ).forEach(eq=>{
+      const d=LATEST[eq]; if(!d) return;
+      const p=`dt-${eq}`, all=stAll(d), c=COL[all];
+      const g=vg.select(`[data-eq="${eq}"]`);
+      g.select(".dt-macro-dot").attr("fill",c);
+      g.selectAll(".dt-mbody").attr("stroke",c).attr("fill", all==="alarm"?"#3a1414":all==="warn"?"#3a2a12":"#14532d");
+      const set=(id,txt,col)=>{ const e=$(id); if(e){ e.textContent=txt; e.setAttribute("fill",col); } };
+      set(`${p}-v-temp`, `${d.temperature.toFixed(1)} °C · ${d.current.toFixed(0)} A`, COL[[stTemp(d),stCur(d)].includes("alarm")?"alarm":[stTemp(d),stCur(d)].includes("warn")?"warn":"ok"]);
+      set(`${p}-v-pres`, `${d.pressure.toFixed(1)} bar`, "#06b6d4");
+      set(`${p}-v-vib`,  `${d.vibration.toFixed(1)} mm/s · ${EQ[eq].spdFmt(d)}`, COL[stVib(d)]);
+      set(`${p}-v-gas`,  `%${(d.gas||0).toFixed(2)}`, COL[stGas(d)]);
+      const dot=(id,s)=>{ const e=$(id); if(e) e.setAttribute("fill",COL[s]); };
+      dot(`${p}-d-temp`,stTemp(d)); dot(`${p}-d-vib`,stVib(d)); dot(`${p}-d-gas`,stGas(d));
+      const eng=$(`${p}-eng`); if(eng) eng.setAttribute("stroke", COL[stTemp(d)]==="#22c55e"?"#475569":COL[stTemp(d)]);
+      const wf=$(`${p}-wf`), wr=$(`${p}-wr`);
+      const wc = stVib(d)==="ok" ? "#334155" : COL[stVib(d)];
+      if(wf) wf.setAttribute("stroke",wc); if(wr) wr.setAttribute("stroke",wc);
+      const heat=$(`${p}-heat`); if(heat) heat.setAttribute("opacity", d.temperature>=80?"1":"0");
+      const cl=$(`${p}-cloud`); if(cl) cl.setAttribute("opacity", d.gas>=1?"1":"0");
+    });
+    // üst rozet: odaklı araç, yoksa filo geneli
+    const b=$("dt-status");
+    if(FOCUS && LATEST[FOCUS]){
+      const d=LATEST[FOCUS], st=stAll(d);
+      if(d.gas>=1.5){ b.textContent="● İSG: METAN"; b.className="tw-badge tw-gas"; }
+      else if(st==="alarm"){ b.textContent="● ARIZA RİSKİ"; b.className="tw-badge tw-alarm"; }
+      else if(st==="warn"){ b.textContent="● DİKKAT"; b.className="tw-badge tw-warn"; }
+      else { b.textContent="● SAĞLIKLI"; b.className="tw-badge tw-ok"; }
+    } else {
+      const worst=Object.keys(EQ).map(e=>stAll(LATEST[e]));
+      const w=worst.includes("alarm")?"alarm":worst.includes("warn")?"warn":"ok";
+      b.textContent = w==="alarm"?"● FİLO: ALARM":w==="warn"?"● FİLO: DİKKAT":"● FİLO SAĞLIKLI";
+      b.className = "tw-badge "+(w==="alarm"?"tw-alarm":w==="warn"?"tw-warn":"tw-ok");
+    }
+    if(FOCUS) fillPanel(FOCUS);
+  }
+
+  /* ---------- animasyon ---------- */
+  let ang=0;
+  function frame(){
+    ang=(ang+3)%360;
+    Object.keys(EQ).forEach(eq=>{
+      const p=`dt-${eq}`, d=LATEST[eq];
+      const sf=$(`${p}-spf`), sr=$(`${p}-spr`);
+      if(sf) sf.setAttribute("transform",`rotate(${ang} 288 322)`);
+      if(sr) sr.setAttribute("transform",`rotate(${ang} 628 322)`);
+      const m=$(`${p}-mach`);
+      if(m) m.setAttribute("transform", (d&&d.vibration>=8)?`translate(0 ${(Math.random()-0.5)*6})`:"");
+    });
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- döngü ---------- */
+  async function poll(){
+    try{ const r=await fetch(API+"/dashboard/latest-all"); LATEST=await r.json(); }catch(e){ return; }
+    paint();
+  }
+  onZoom(d3.zoomIdentity);
+  poll(); setInterval(poll, 4000); requestAnimationFrame(frame);
+})();
 </script>
 </body>
 </html>
