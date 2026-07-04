@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sandvik LH517 — Araç Dijital İkizi (Prototip)</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',system-ui,sans-serif; background:#0a0e1a; color:#e2e8f0; padding:20px;
+         min-height:100vh; display:flex; flex-direction:column; align-items:center; }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+
+  .wrap { width:100%; max-width:920px; background:#0c1320; border:1px solid #1e293b; border-radius:16px; padding:20px 22px; }
+  .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .head h1 { font-size:1.25rem; font-weight:800; }
+  .head h1 span { color:#3b82f6; }
+  .badge { font-size:0.74rem; font-weight:800; padding:5px 14px; border-radius:99px; letter-spacing:0.4px; }
+  .sub { font-size:0.76rem; color:#64748b; margin-bottom:6px; }
+
+  svg { width:100%; height:auto; display:block; }
+
+  /* sensör değer kutuları */
+  .lbl { font-size:9px; fill:#64748b; letter-spacing:0.3px; }
+  .val { font-size:14px; font-weight:800; }
+
+  .heat, .gas-cloud { transition:opacity 0.5s; }
+
+  /* kontroller */
+  .ctrls { display:flex; gap:10px; margin-top:16px; }
+  .btn { flex:1; padding:12px; border-radius:10px; font-size:0.86rem; font-weight:700; cursor:pointer;
+         border:1px solid #334155; background:#111827; color:#e2e8f0; transition:transform .12s, background .15s; }
+  .btn:active { transform:translateY(1px); }
+  .btn.anom  { border-color:#7f1d1d; color:#fca5a5; } .btn.anom:hover{ background:#2a1414; }
+  .btn.gas   { border-color:#7c2d12; color:#fdba74; } .btn.gas:hover{ background:#241405; }
+  .btn.norm  { border-color:#14532d; color:#86efac; } .btn.norm:hover{ background:#0f2417; }
+  .foot { font-size:0.68rem; color:#475569; text-align:center; margin-top:12px; }
+
+  .bg-ok{background:#14532d;color:#86efac;} .bg-warn{background:#713f12;color:#fde68a;}
+  .bg-alarm{background:#7f1d1d;color:#fca5a5;} .bg-gas{background:#7c2d12;color:#fdba74;}
+</style>
+</head>
+<body>
+  <h2 class="sr-only">Sandvik LH517 yükleyicinin 2D dijital ikizi: sensör değerleri makinenin ilgili parçaları üzerinde canlı gösterilir.</h2>
+
+  <div class="wrap">
+    <div class="head">
+      <h1>⛏ Sandvik LH517 — <span>Araç Dijital İkizi</span></h1>
+      <span class="badge bg-ok" id="status">● SAĞLIKLI</span>
+    </div>
+    <div class="sub">Sensörler makine parçaları üzerinde canlı · mock veri 2 sn'de güncellenir · backend yok</div>
+
+    <svg viewBox="0 0 820 430" role="img" aria-label="LH517 araç şeması ve sensörler">
+      <!-- zemin -->
+      <rect x="0" y="350" width="820" height="80" fill="#0a0f1c"/>
+      <line x1="0" y1="350" x2="820" y2="350" stroke="#1e293b" stroke-width="3"/>
+
+      <!-- metan bulutu -->
+      <g class="gas-cloud" id="gas-cloud" opacity="0">
+        <ellipse cx="410" cy="80" rx="140" ry="40" fill="#10b981" opacity="0.16"/>
+        <ellipse cx="360" cy="70" rx="80" ry="26" fill="#10b981" opacity="0.12"/>
+      </g>
+
+      <!-- ===== MAKİNE ===== -->
+      <g id="machine">
+        <!-- arka şasi / motor bölmesi -->
+        <rect x="470" y="232" width="250" height="86" rx="9" fill="#243044" stroke="#3b4a63" stroke-width="2"/>
+        <rect id="engine" x="606" y="246" width="100" height="58" rx="6" fill="#2d3a52" stroke="#475569" stroke-width="1.5"/>
+        <g class="heat" id="heat" opacity="0">
+          <path d="M616 242 q5 -11 10 0 q5 11 10 0" stroke="#f59e0b" stroke-width="2.5" fill="none"/>
+          <path d="M648 238 q5 -11 10 0 q5 11 10 0" stroke="#fb923c" stroke-width="2.5" fill="none"/>
+          <path d="M680 242 q5 -11 10 0 q5 11 10 0" stroke="#f59e0b" stroke-width="2.5" fill="none"/>
+        </g>
+        <rect x="700" y="214" width="11" height="22" rx="2" fill="#475569"/>
+
+        <!-- kabin -->
+        <path d="M494 232 L514 184 L568 184 L568 232 Z" fill="#1e293b" stroke="#3b4a63" stroke-width="2"/>
+        <rect x="520" y="194" width="42" height="30" rx="3" fill="#0f1a2e" stroke="#334155"/>
+
+        <!-- artikülasyon -->
+        <rect x="444" y="256" width="34" height="44" rx="4" fill="#1b2536" stroke="#475569" stroke-width="2"/>
+        <circle cx="461" cy="278" r="7" fill="#64748b"/>
+
+        <!-- ön şasi -->
+        <rect x="180" y="246" width="266" height="64" rx="9" fill="#243044" stroke="#3b4a63" stroke-width="2"/>
+
+        <!-- kaldırma kolu + silindir -->
+        <line x1="232" y1="262" x2="116" y2="214" stroke="#3b4a63" stroke-width="12" stroke-linecap="round"/>
+        <line x1="284" y1="286" x2="178" y2="236" stroke="#475569" stroke-width="7" stroke-linecap="round"/>
+
+        <!-- kova -->
+        <path d="M116 214 L80 234 L78 286 L146 286 L146 230 Z" fill="#2d3a52" stroke="#5b6b86" stroke-width="2"/>
+
+        <!-- tekerlekler -->
+        <g id="wheel-f">
+          <circle cx="288" cy="322" r="44" fill="#0f172a" stroke="#334155" stroke-width="7"/>
+          <circle cx="288" cy="322" r="16" fill="#1e293b" stroke="#475569" stroke-width="3"/>
+          <g id="spokes-f" stroke="#475569" stroke-width="3">
+            <line x1="288" y1="306" x2="288" y2="338"/><line x1="272" y1="322" x2="304" y2="322"/>
+          </g>
+        </g>
+        <g id="wheel-r">
+          <circle cx="628" cy="322" r="48" fill="#0f172a" stroke="#334155" stroke-width="7"/>
+          <circle cx="628" cy="322" r="17" fill="#1e293b" stroke="#475569" stroke-width="3"/>
+          <g id="spokes-r" stroke="#475569" stroke-width="3">
+            <line x1="628" y1="305" x2="628" y2="339"/><line x1="611" y1="322" x2="645" y2="322"/>
+          </g>
+        </g>
+      </g>
+
+      <!-- ===== SENSÖR ROZETLERİ ===== -->
+      <!-- Motor sıcaklık -->
+      <g>
+        <line x1="656" y1="246" x2="656" y2="150" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <circle id="dot-temp" cx="656" cy="270" r="6" fill="#22c55e"/>
+        <rect x="612" y="120" width="128" height="36" rx="7" fill="#111827" stroke="#1e293b"/>
+        <text class="lbl" x="624" y="136">MOTOR SICAKLIK</text>
+        <text class="val" id="v-temp" x="624" y="151" fill="#22c55e">—</text>
+      </g>
+      <!-- Motor akım -->
+      <g>
+        <line x1="540" y1="280" x2="540" y2="330" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <circle id="dot-cur" cx="540" cy="280" r="6" fill="#ec4899"/>
+        <rect x="484" y="334" width="120" height="36" rx="7" fill="#111827" stroke="#1e293b"/>
+        <text class="lbl" x="496" y="350">MOTOR AKIM</text>
+        <text class="val" id="v-cur" x="496" y="365" fill="#ec4899">—</text>
+      </g>
+      <!-- Hidrolik basınç -->
+      <g>
+        <line x1="210" y1="252" x2="210" y2="150" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <circle id="dot-pres" cx="210" cy="252" r="6" fill="#06b6d4"/>
+        <rect x="150" y="120" width="132" height="36" rx="7" fill="#111827" stroke="#1e293b"/>
+        <text class="lbl" x="162" y="136">HİDROLİK BASINÇ</text>
+        <text class="val" id="v-pres" x="162" y="151" fill="#06b6d4">—</text>
+      </g>
+      <!-- Titreşim -->
+      <g>
+        <line x1="288" y1="322" x2="340" y2="380" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <circle id="dot-vib" cx="288" cy="322" r="6" fill="#22c55e"/>
+        <rect x="286" y="372" width="118" height="34" rx="7" fill="#111827" stroke="#1e293b"/>
+        <text class="lbl" x="298" y="387">TİTREŞİM</text>
+        <text class="val" id="v-vib" x="298" y="401" fill="#22c55e" style="font-size:13px">—</text>
+      </g>
+      <!-- Hız -->
+      <g>
+        <line x1="628" y1="322" x2="688" y2="380" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <circle cx="628" cy="322" r="5" fill="#22c55e"/>
+        <rect x="648" y="372" width="100" height="34" rx="7" fill="#111827" stroke="#1e293b"/>
+        <text class="lbl" x="660" y="387">HIZ</text>
+        <text class="val" id="v-spd" x="660" y="401" fill="#22c55e" style="font-size:13px">—</text>
+      </g>
+      <!-- Metan -->
+      <g>
+        <circle id="dot-gas" cx="410" cy="86" r="6" fill="#10b981"/>
+        <rect x="344" y="100" width="132" height="36" rx="7" fill="#111827" stroke="#1e293b"/>
+        <text class="lbl" x="356" y="116">METAN (CH₄) · İSG</text>
+        <text class="val" id="v-gas" x="356" y="131" fill="#10b981">—</text>
+      </g>
+    </svg>
+
+    <div class="ctrls">
+      <button class="btn anom" onclick="VehicleService.setMode('anom')">⚠ Arıza Senaryosu</button>
+      <button class="btn gas"  onclick="VehicleService.setMode('gas')">💨 Metan Kaçağı</button>
+      <button class="btn norm" onclick="VehicleService.setMode('normal')">✓ Normal</button>
+    </div>
+    <div class="foot">Konsept · gerçek üründe veriler MQTT / canlı API'den beslenir (VehicleService katmanı değiştirilir)</div>
+  </div>
+
+<script>
+/* ============================================================================
+   SERVICE KATMANI — mock veri (görselden bağımsız, ileride MQTT/API'ye bağlanır)
+   ============================================================================ */
+const VehicleService = (() => {
+  let mode = "normal";
+  const listeners = [];
+  const rnd = (a,b)=> a + Math.random()*(b-a);
+
+  function read() {
+    if (mode === "anom")
+      return { temp:rnd(98,109), cur:rnd(205,224), pres:rnd(255,278), vib:rnd(8,12), gas:rnd(0.1,0.5), spd:rnd(1380,1460) };
+    if (mode === "gas")
+      return { temp:rnd(74,88), cur:rnd(175,196), pres:rnd(250,275), vib:rnd(2,4), gas:rnd(1.6,2.4), spd:rnd(1450,1490) };
+    return   { temp:rnd(72,88), cur:rnd(170,196), pres:rnd(250,278), vib:rnd(2,4.2), gas:rnd(0.1,0.6), spd:rnd(1450,1490) };
+  }
+  function emit(){ const d=read(); listeners.forEach(fn=>fn(d)); }
+
+  return {
+    subscribe(fn){ listeners.push(fn); fn(read()); },
+    start(){ emit(); return setInterval(emit, 2000); },   // 2 sn periyot
+    setMode(m){ mode=m; emit(); },
+    // GELECEK: connectMQTT(url){...} / connectAPI(base){...}  → read()'i değiştir
+  };
+})();
+
+/* ============================================================================
+   GÖRSEL KATMAN — gelen veriyi makine üzerinde canlandırır
+   ============================================================================ */
+const $ = id => document.getElementById(id);
+const COL = { ok:"#22c55e", warn:"#f59e0b", alarm:"#ef4444" };
+
+function colorFor(val, warnT, alarmT){ return val>=alarmT ? "alarm" : val>=warnT ? "warn" : "ok"; }
+function gasColor(g){ return g>=2 ? "alarm" : g>=1.5 ? "warn" : g>=1 ? "warn" : "ok"; }
+
+let last = null;
+
+function apply(d){
+  last = d;
+  const tS = colorFor(d.temp, 92, 100);
+  const vS = colorFor(d.vib, 5, 8);
+  const cS = d.cur>=200 ? "alarm" : "ok";
+  const gS = gasColor(d.gas);
+
+  set("temp", d.temp.toFixed(1)+" °C", tS);
+  set("cur",  d.cur.toFixed(0)+" A",  cS, "#ec4899");
+  set("pres", d.pres.toFixed(0)+" bar", "ok", "#06b6d4");
+  set("vib",  d.vib.toFixed(1)+" mm/s", vS);
+  set("spd",  d.spd.toFixed(0)+" rpm", "ok");
+  setGas(d.gas, gS);
+
+  $("heat").setAttribute("opacity", d.temp>=92 ? "1" : "0");
+  $("gas-cloud").setAttribute("opacity", d.gas>=1 ? "1" : "0");
+
+  // genel durum
+  const worst = [tS,vS,cS,gS].includes("alarm") ? "alarm"
+              : [tS,vS,cS,gS].includes("warn") ? "warn" : "ok";
+  const badge = $("status");
+  if (gS!=="ok" && d.gas>=1.5) { badge.textContent="● İSG: METAN"; badge.className="badge bg-gas"; }
+  else if (worst==="alarm")    { badge.textContent="● ARIZA RİSKİ"; badge.className="badge bg-alarm"; }
+  else if (worst==="warn")     { badge.textContent="● DİKKAT";      badge.className="badge bg-warn"; }
+  else                         { badge.textContent="● SAĞLIKLI";    badge.className="badge bg-ok"; }
+}
+
+function set(key, text, state, fixed){
+  const c = fixed && state==="ok" ? fixed : COL[state];
+  $("v-"+key).textContent = text;
+  $("v-"+key).setAttribute("fill", c);
+  const dot = $("dot-"+key);
+  if (dot) dot.setAttribute("fill", c);
+}
+function setGas(g, state){
+  const c = COL[state];
+  $("v-gas").textContent = "%"+g.toFixed(2);
+  $("v-gas").setAttribute("fill", c);
+  $("dot-gas").setAttribute("fill", c);
+}
+
+/* animasyon: tekerlek dönüşü + titreşim sarsıntısı */
+let ang = 0;
+function frame(){
+  const fast = last ? Math.max(1, last.spd/400) : 3;
+  ang = (ang + fast) % 360;
+  $("spokes-f").setAttribute("transform", `rotate(${ang} 288 322)`);
+  $("spokes-r").setAttribute("transform", `rotate(${ang} 628 322)`);
+  const shake = (last && last.vib>=8) ? (Math.random()-0.5)*4 : 0;
+  $("machine").setAttribute("transform", `translate(0 ${shake})`);
+  requestAnimationFrame(frame);
+}
+
+VehicleService.subscribe(apply);
+VehicleService.start();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

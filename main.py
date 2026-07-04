@@ -141,6 +141,8 @@ app.include_router(anomalies.router)
 app.include_router(predict.router)
 app.include_router(dashboard.router)
 app.include_router(rag.router)
+from app.routers import report
+app.include_router(report.router)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
