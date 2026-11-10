@@ -1,20 +1,24 @@
-"""
-LSTM tahmin endpoint'i.
-Ekipmanın son SEQ_LEN ölçümüne bakarak bir sonraki değerleri tahmin eder.
-"""
+"""LSTM kestirim uç noktaları: kısa vadeli sensör tahmini ve Kalan Faydalı Ömür."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
 
+from app.config import SIMULATOR_INTERVAL
 from app.database import get_db
 from app.models.sensor import SensorReading
-from app.services.lstm_predictor import predict, predict_rul, SEQ_LEN
+from app.services.lstm_predictor import SEQ_LEN, predict, predict_rul
+from data.simulator import EQUIPMENT_PROFILES, FEATURES
 
 router = APIRouter(prefix="/predict", tags=["Tahmin (LSTM)"])
 
 
-async def _recent_sequence(equipment_id: str, db: AsyncSession):
+def _check(equipment_id: str):
+    if equipment_id not in EQUIPMENT_PROFILES:
+        raise HTTPException(404, f"Bilinmeyen ekipman: {equipment_id}")
+
+
+async def recent_sequence(equipment_id: str, db: AsyncSession):
     result = await db.execute(
         select(SensorReading)
         .where(SensorReading.equipment_id == equipment_id)
@@ -23,48 +27,51 @@ async def _recent_sequence(equipment_id: str, db: AsyncSession):
     )
     readings = result.scalars().all()
     if len(readings) < SEQ_LEN:
-        raise HTTPException(
-            status_code=400,
-            detail=f"En az {SEQ_LEN} ölçüm gerekli, mevcut: {len(readings)}",
-        )
-    return [
-        [r.temperature, r.vibration, r.pressure, r.current, r.speed]
-        for r in reversed(readings)
-    ]
+        raise HTTPException(409, f"En az {SEQ_LEN} ölçüm gerekli, mevcut: {len(readings)}")
+    return [[getattr(r, k) for k in FEATURES] for r in reversed(readings)]
 
 
 @router.get("/{equipment_id}")
-async def predict_next(equipment_id: str, db: AsyncSession = Depends(get_db)):
-    sequence = await _recent_sequence(equipment_id, db)
-    return {"equipment_id": equipment_id, "tahmin": predict(sequence)}
+async def predict_next(
+    equipment_id: str,
+    steps: int = Query(default=6, ge=1, le=30),
+    db: AsyncSession = Depends(get_db),
+):
+    """Son okumalardan sonraki `steps` adımın sensör tahmini."""
+    _check(equipment_id)
+    sequence = await recent_sequence(equipment_id, db)
+    return {
+        "equipment_id": equipment_id,
+        "adim_saniye": SIMULATOR_INTERVAL,
+        "tahmin": predict(sequence, equipment_id, steps=steps),
+    }
 
 
 @router.get("/rul/{equipment_id}")
 async def predict_remaining_life(
     equipment_id: str,
-    senaryo: str = "normal",   # normal | degradasyon
+    senaryo: str = Query(default="normal", pattern="^(normal|degradasyon)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Kalan Faydalı Ömür (RUL) tahmini.
-    - senaryo=normal: gerçek son ölçümlerle (sağlıklı durumda yüksek RUL)
-    - senaryo=degradasyon: ilerleyen bir arıza senaryosu (jüri demosu)
+    - senaryo=normal: canlı verinin son okumalarıyla
+    - senaryo=degradasyon: ilerleyen bir arıza senaryosu (demo; gerçek RUL ile kıyaslanır)
     """
+    _check(equipment_id)
     if senaryo == "degradasyon":
         from data.simulator import generate_degradation_run
-        # arızaya yaklaşmış bir noktadan SEQ_LEN'lik pencere üret
-        run = generate_degradation_run(equipment_id, steps=60)
-        window = run.iloc[40:40 + SEQ_LEN]   # sona yakın → düşük RUL
-        sequence = window[["temperature", "vibration", "pressure",
-                           "current", "speed"]].values.tolist()
-        gercek_rul = round(float(window["rul_hours"].iloc[-1]), 1)
-        result = predict_rul(sequence, equipment_id)
-        result["senaryo"]     = "degradasyon (arıza ilerliyor)"
-        result["gercek_rul"]  = gercek_rul   # doğrulama için
-        result["ariza_modu"]  = run["mode"].iloc[0]
+        import random
+        run = generate_degradation_run(equipment_id, steps=120)
+        end = random.randint(70, 112)        # arızaya 4–25 saat kala bir an
+        window = run.iloc[end - SEQ_LEN:end]
+        result = predict_rul(window[FEATURES].values.tolist(), equipment_id)
+        result["senaryo"]    = "degradasyon"
+        result["gercek_rul"] = round(float(window["rul_hours"].iloc[-1]), 1)
+        result["ariza_modu"] = run["mode"].iloc[0]
         return result
 
-    sequence = await _recent_sequence(equipment_id, db)
+    sequence = await recent_sequence(equipment_id, db)
     result = predict_rul(sequence, equipment_id)
-    result["senaryo"] = "gerçek zamanlı (canlı veri)"
+    result["senaryo"] = "canlı"
     return result

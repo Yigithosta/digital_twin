@@ -51,6 +51,7 @@ async def seed():
                 pressure=d["pressure"],
                 current=d["current"],
                 speed=d["speed"],
+                gas=d.get("gas", 0.0),
                 is_anomaly=result["is_anomaly"],
                 anomaly_score=result["anomaly_score"],
             )

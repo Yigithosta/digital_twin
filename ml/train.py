@@ -3,251 +3,160 @@ Model Eğitimi
 -------------
 Çalıştırma: python ml/train.py
 
-1. Isolation Forest  → gerçek Kaggle verisiyle eğitilir
-2. LSTM              → simüle zaman serisiyle eğitilir
+1. Isolation Forest → normal çalışma verisiyle (yenilik tespiti)
+2. LSTM tahminci    → bir sonraki sensör okuması
+3. LSTM RUL         → arızaya kadar (run-to-failure) serilerden kalan faydalı ömür
+
+Tüm modeller ekipman profiline göre normalize edilmiş özelliklerle eğitilir.
+Doğrulama metrikleri, eğitimde kullanılmayan serilerde hesaplanır.
 """
 
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pandas as pd
 import numpy as np
-import pickle
 import torch
 import torch.nn as nn
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
 
-DATA_PATH  = "data/predictive_maintenance.csv"
-IF_PATH    = "ml/isolation_forest.pkl"
-SCALER_PATH = "ml/scaler.pkl"
-LSTM_PATH  = "ml/lstm_model.pt"
+from app.services.anomaly_detector import IF_PATH, fit_isolation_forest, save_bundle
+from app.services.lstm_predictor import (LSTM_PATH, RUL_MAX_HOURS, RUL_PATH, SEQ_LEN,
+                                         LSTMModel, RULModel)
+from data.simulator import (EQUIPMENT_PROFILES, FEATURES, LiveSimulator,
+                            generate_degradation_run, generate_rul_dataset, normalize)
+
+SEED       = 42
+BATCH_SIZE = 128
+EPOCHS     = 30
+RUL_EPOCHS = 40
 
 
-# ─────────────────────────────────────────────
-# 1. Isolation Forest
-# ─────────────────────────────────────────────
+def _loader(X, y, shuffle=True):
+    ds = torch.utils.data.TensorDataset(torch.tensor(X), torch.tensor(y))
+    return torch.utils.data.DataLoader(ds, batch_size=BATCH_SIZE, shuffle=shuffle)
+
+
+def _fit(model, train, epochs, label):
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    criterion = nn.MSELoss()
+    for epoch in range(1, epochs + 1):
+        model.train()
+        total = 0.0
+        for xb, yb in train:
+            optimizer.zero_grad()
+            loss = criterion(model(xb), yb)
+            loss.backward()
+            optimizer.step()
+            total += loss.item()
+        if epoch % 10 == 0:
+            print(f"  {label} epoch {epoch:3d}/{epochs} — kayıp: {total / len(train):.5f}")
+    return model.eval()
+
+
+# ── 1. Isolation Forest ──────────────────────────────────────────────────────
 
 def train_isolation_forest():
     print("── Isolation Forest eğitiliyor ──")
-
-    # Kaggle'dan arıza oranını öğren
-    df_kaggle = pd.read_csv(DATA_PATH)
-    contamination = float(df_kaggle["Target"].mean())  # ~%3.4
-    print(f"  Kaggle arıza oranı  : %{contamination*100:.1f}")
-
-    # Simülatörden gerçekçi sensör verisi üret (ekipman ölçek aralıkları doğru)
-    from data.simulator import generate_training_data
-    df_sim = generate_training_data(n_samples=5000)
-
-    features = ["temperature", "vibration", "pressure", "current", "speed"]
-    X = df_sim[features].values
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    model = IsolationForest(
-        n_estimators=200,
-        contamination=contamination,
-        random_state=42,
-    )
-    model.fit(X_scaled)
-
-    os.makedirs("ml", exist_ok=True)
-    with open(IF_PATH, "wb") as f:
-        pickle.dump(model, f)
-    with open(SCALER_PATH, "wb") as f:
-        pickle.dump(scaler, f)
-
-    preds    = model.predict(X_scaled)
-    detected = (preds == -1).sum()
-    print(f"  Eğitim verisi       : {len(df_sim)} örnek (simüle)")
-    print(f"  Tespit edilen       : {detected} anomali")
-    print(f"  Model kaydedildi    : {IF_PATH}")
+    bundle = fit_isolation_forest(seed=SEED)
+    save_bundle(bundle)
+    print(f"  Model kaydedildi: {IF_PATH}  (skor ölçeği {bundle['score_scale']:.3f})")
 
 
-# ─────────────────────────────────────────────
-# 2. LSTM
-# ─────────────────────────────────────────────
+# ── 2. LSTM tahminci ─────────────────────────────────────────────────────────
 
-SEQ_LEN    = 20
-INPUT_SIZE = 5
-HIDDEN     = 64
-LAYERS     = 2
-EPOCHS     = 50
-
-
-class LSTMModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(INPUT_SIZE, HIDDEN, LAYERS,
-                            batch_first=True, dropout=0.2)
-        self.fc   = nn.Linear(HIDDEN, INPUT_SIZE)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
-
-
-def _make_sequences(data: np.ndarray):
-    X, y = [], []
-    for i in range(len(data) - SEQ_LEN):
-        X.append(data[i : i + SEQ_LEN])
-        y.append(data[i + SEQ_LEN])
-    return np.array(X), np.array(y)
-
-
-LSTM_SCALER_PATH = "ml/lstm_scaler.pkl"
-BATCH_SIZE = 128
-
-
-def train_lstm():
-    print("\n── LSTM eğitiliyor (simülatör verisi) ──")
-
-    from data.simulator import generate_training_data
-    # 3000 örnek, simülatörden
-    df = generate_training_data(n_samples=3000)
-
-    features = ["temperature", "vibration", "pressure", "current", "speed"]
-
-    scaler = StandardScaler()
-    data_scaled = scaler.fit_transform(df[features].values)
-
-    with open(LSTM_SCALER_PATH, "wb") as f:
-        pickle.dump(scaler, f)
-    print(f"  LSTM scaler kaydedildi: {LSTM_SCALER_PATH}")
-
-    X_all, y_all = _make_sequences(data_scaled)
-    print(f"  Dizi sayısı: {len(X_all)}")
-
-    # CPU kullan (MPS için bellek taşması önlenir)
-    device = torch.device("cpu")
-    print(f"  Cihaz: {device}")
-
-    X_t = torch.tensor(X_all, dtype=torch.float32)
-    y_t = torch.tensor(y_all, dtype=torch.float32)
-
-    dataset   = torch.utils.data.TensorDataset(X_t, y_t)
-    loader    = torch.utils.data.DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-
-    model     = LSTMModel().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    criterion = nn.MSELoss()
-
-    model.train()
-    for epoch in range(1, EPOCHS + 1):
-        epoch_loss = 0.0
-        for xb, yb in loader:
-            optimizer.zero_grad()
-            loss = criterion(model(xb), yb)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        if epoch % 10 == 0:
-            print(f"  Epoch {epoch:3d}/{EPOCHS} — Loss: {epoch_loss/len(loader):.5f}")
-
-    torch.save(model.state_dict(), LSTM_PATH)
-    print(f"  Model kaydedildi: {LSTM_PATH}")
-
-
-# ─────────────────────────────────────────────
-# 3. RUL (Kalan Faydalı Ömür) — LSTM Regresör
-# ─────────────────────────────────────────────
-
-RUL_PATH        = "ml/rul_lstm.pt"
-RUL_SCALER_PATH = "ml/rul_scaler.pkl"
-RUL_MAX_HOURS   = 100.0   # etiket normalizasyonu için tavan
-RUL_EPOCHS      = 40
-
-
-class RULModel(nn.Module):
-    """Sensör penceresi → kalan faydalı ömür (normalize 0-1)."""
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(INPUT_SIZE, HIDDEN, LAYERS,
-                            batch_first=True, dropout=0.2)
-        self.fc   = nn.Linear(HIDDEN, 1)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return torch.sigmoid(self.fc(out[:, -1, :]))   # [0,1]
-
-
-def _rul_sequences(run: np.ndarray, rul: np.ndarray):
-    """Tek bir run-to-failure trajektorisinden (pencere → RUL) çiftleri."""
-    X, y = [], []
-    for i in range(len(run) - SEQ_LEN):
-        X.append(run[i : i + SEQ_LEN])
-        y.append(rul[i + SEQ_LEN - 1])   # pencere sonundaki RUL
+def _windows(series: np.ndarray):
+    X = [series[i:i + SEQ_LEN] for i in range(len(series) - SEQ_LEN)]
+    y = [series[i + SEQ_LEN] for i in range(len(series) - SEQ_LEN)]
     return X, y
 
 
+def _forecast_series(steps_per_equipment: int, degradation_runs: int, seed: int):
+    """Her ekipman için normal çalışma serisi + arızaya giden seriler (z-skor)."""
+    sim = LiveSimulator(seed=seed)
+    series = []
+    for eq_id in EQUIPMENT_PROFILES:
+        series.append(normalize(sim.sequence(eq_id, steps_per_equipment), eq_id))
+        for _ in range(degradation_runs):
+            run = generate_degradation_run(eq_id)
+            series.append(normalize(run[FEATURES].values, eq_id))
+    return series
+
+
+def train_lstm():
+    print("\n── LSTM tahminci eğitiliyor ──")
+    X_tr, y_tr, X_va, y_va = [], [], [], []
+    for s in _forecast_series(3000, 30, SEED):
+        xs, ys = _windows(s)
+        X_tr += xs; y_tr += ys
+    for s in _forecast_series(600, 6, SEED + 1):
+        xs, ys = _windows(s)
+        X_va += xs; y_va += ys
+    X_tr, y_tr = np.array(X_tr, dtype=np.float32), np.array(y_tr, dtype=np.float32)
+    X_va, y_va = np.array(X_va, dtype=np.float32), np.array(y_va, dtype=np.float32)
+    print(f"  Pencere: {len(X_tr)} eğitim · {len(X_va)} doğrulama")
+
+    model = _fit(LSTMModel(), _loader(X_tr, y_tr), EPOCHS, "LSTM")
+    with torch.no_grad():
+        pred = model(torch.tensor(X_va)).numpy()
+    rmse = float(np.sqrt(np.mean((pred - y_va) ** 2)))
+    naive = float(np.sqrt(np.mean((X_va[:, -1, :] - y_va) ** 2)))   # son değeri tekrar et
+    print(f"  Doğrulama RMSE: {rmse:.3f} sigma  (son-değer tahmini: {naive:.3f})")
+
+    torch.save(model.state_dict(), LSTM_PATH)
+    print(f"  Model kaydedildi: {LSTM_PATH}")
+    return {"rmse": rmse, "naive_rmse": naive}
+
+
+# ── 3. RUL (Kalan Faydalı Ömür) ──────────────────────────────────────────────
+
 def train_rul():
     print("\n── RUL (Kalan Faydalı Ömür) modeli eğitiliyor ──")
-    from data.simulator import generate_rul_dataset
-
     df = generate_rul_dataset(runs_per_equipment=40)
-    features = ["temperature", "vibration", "pressure", "current", "speed"]
 
-    # Tüm run'lar üzerinde tek scaler
-    scaler = StandardScaler()
-    scaler.fit(df[features].values)
-    with open(RUL_SCALER_PATH, "wb") as f:
-        pickle.dump(scaler, f)
-    print(f"  RUL scaler kaydedildi: {RUL_SCALER_PATH}")
+    # Run'lar bütün olarak ayrılır: doğrulama serileri eğitimde hiç görülmez.
+    run_ids = df["run_id"].unique()
+    rng = np.random.default_rng(SEED)
+    rng.shuffle(run_ids)
+    val_ids = set(run_ids[: len(run_ids) // 5])
 
-    # Her bağımsız run'ı run_id'ye göre ayrı işle (pencereler run sınırını aşmasın).
-    X_all, y_all = [], []
-    feat_scaled = scaler.transform(df[features].values)
-    rul_vals = df["rul_hours"].values
-    n_runs = 0
-    for _, idx in df.groupby("run_id").groups.items():
-        idx = list(idx)
-        run = feat_scaled[idx]
-        rul = np.clip(rul_vals[idx] / RUL_MAX_HOURS, 0, 1)
-        if len(run) > SEQ_LEN:
-            xs, ys = _rul_sequences(run, rul)
-            X_all.extend(xs); y_all.extend(ys)
-            n_runs += 1
+    sets = {"tr": ([], []), "va": ([], [])}
+    for run_id, run in df.groupby("run_id"):
+        if len(run) <= SEQ_LEN:
+            continue
+        z = normalize(run[FEATURES].values, run["equipment_id"].iloc[0])
+        rul = np.clip(run["rul_hours"].values / RUL_MAX_HOURS, 0, 1)
+        X, y = sets["va" if run_id in val_ids else "tr"]
+        for i in range(len(z) - SEQ_LEN):
+            X.append(z[i:i + SEQ_LEN])
+            y.append(rul[i + SEQ_LEN - 1])   # pencere sonundaki RUL
 
-    X_all = np.array(X_all, dtype=np.float32)
-    y_all = np.array(y_all, dtype=np.float32).reshape(-1, 1)
-    print(f"  Eğitim penceresi: {len(X_all)} (run sayısı: {n_runs})")
+    X_tr = np.array(sets["tr"][0], dtype=np.float32)
+    y_tr = np.array(sets["tr"][1], dtype=np.float32).reshape(-1, 1)
+    X_va = np.array(sets["va"][0], dtype=np.float32)
+    y_va = np.array(sets["va"][1], dtype=np.float32).reshape(-1, 1)
+    print(f"  Pencere: {len(X_tr)} eğitim · {len(X_va)} doğrulama ({len(val_ids)} ayrı run)")
 
-    device = torch.device("cpu")
-    X_t = torch.tensor(X_all)
-    y_t = torch.tensor(y_all)
-    loader = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(X_t, y_t),
-        batch_size=BATCH_SIZE, shuffle=True,
-    )
-
-    model     = RULModel().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    criterion = nn.MSELoss()
-
-    model.train()
-    for epoch in range(1, RUL_EPOCHS + 1):
-        ep = 0.0
-        for xb, yb in loader:
-            optimizer.zero_grad()
-            loss = criterion(model(xb), yb)
-            loss.backward()
-            optimizer.step()
-            ep += loss.item()
-        if epoch % 10 == 0:
-            # MAE'yi saat cinsine çevir
-            mae_h = (ep / len(loader)) ** 0.5 * RUL_MAX_HOURS
-            print(f"  Epoch {epoch:3d}/{RUL_EPOCHS} — Loss: {ep/len(loader):.5f}  (~RMSE {mae_h:.1f} saat)")
+    model = _fit(RULModel(), _loader(X_tr, y_tr), RUL_EPOCHS, "RUL")
+    with torch.no_grad():
+        pred = model(torch.tensor(X_va)).numpy()
+    err = np.abs(pred - y_va) * RUL_MAX_HOURS
+    mae = float(err.mean())
+    near = y_va * RUL_MAX_HOURS < 24          # bakım kararının verildiği bölge
+    mae_near = float(err[near].mean())
+    print(f"  Doğrulama MAE: {mae:.1f} saat  ·  son 24 saatte: {mae_near:.1f} saat")
 
     torch.save(model.state_dict(), RUL_PATH)
     print(f"  Model kaydedildi: {RUL_PATH}")
+    return {"mae_hours": mae, "mae_last24h": mae_near}
 
-
-# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
     train_isolation_forest()
     train_lstm()
     train_rul()
+    for stale in ("ml/scaler.pkl", "ml/lstm_scaler.pkl", "ml/rul_scaler.pkl"):
+        if os.path.exists(stale):
+            os.remove(stale)
     print("\nEğitim tamamlandı.")

@@ -9,13 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from datetime import datetime, timedelta, timezone
 
+from app.config import EQUIPMENT_IDS
 from app.database import get_db
 from app.models.sensor import SensorReading, AnomalyLog
+from app.routers.predict import recent_sequence
+from app.services.lstm_predictor import predict_rul
 from app.services.report_generator import build_anomaly_report
 
 router = APIRouter(prefix="/report", tags=["Raporlama (PDF)"])
-
-EQUIPMENT_IDS = ["conveyor_01", "pump_01", "crusher_01"]
 
 
 @router.get("/anomali-pdf")
@@ -44,11 +45,9 @@ async def anomali_pdf(db: AsyncSession = Depends(get_db)):
 
     # RUL: her ekipman için canlı LSTM tahmini (veri yetersizse atla)
     rul_rows = []
-    from app.routers.predict import _recent_sequence
-    from app.services.lstm_predictor import predict_rul
     for eq in EQUIPMENT_IDS:
         try:
-            seq = await _recent_sequence(eq, db)
+            seq = await recent_sequence(eq, db)
             r = predict_rul(seq, eq)
             rul_rows.append({"equipment_id": eq, "rul_saat": r.get("rul_saat"),
                              "saglik_yuzde": r.get("saglik_yuzde"), "durum": r.get("durum")})

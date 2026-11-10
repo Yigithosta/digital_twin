@@ -1,66 +1,74 @@
 """
 Model Doğrulama — Isolation Forest (anomali tespiti)
 -----------------------------------------------------
-Model, sistemin gerçekte işlediği veri dağılımında (Digital Twin simülatörü;
-canlı MQTT akışıyla aynı üretici) etiketli bir test kümesi üzerinde değerlendirilir.
-Bu, modelin sahadaki gerçek performansını yansıtan doğru değerlendirmedir.
+Model, sistemin gerçekte işlediği veri dağılımında (saha simülatörü; canlı MQTT
+akışıyla aynı üretici) eğitimden bağımsız, etiketli bir test kümesinde
+değerlendirilir. Sonuçlar simülasyon verisine aittir; saha verisiyle yeniden
+doğrulanmalıdır.
 
-Çalıştırma: python3 ml/evaluate.py
+Çalıştırma: python ml/evaluate.py
 """
 
-import sys, os, pickle
+import os
+import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
-from sklearn.metrics import (classification_report, confusion_matrix,
-                             roc_auc_score, accuracy_score)
-from data.simulator import _normal_reading, _anomaly_reading, EQUIPMENT_PROFILES
+from sklearn.metrics import (accuracy_score, classification_report,
+                             confusion_matrix, roc_auc_score)
 
-FEATURES = ["temperature", "vibration", "pressure", "current", "speed"]
-N_TEST   = 4000
+from app.services.anomaly_detector import _load, build_features
+from data.simulator import (EQUIPMENT_PROFILES, FEATURES, _anomaly_reading,
+                            _normal_reading, normalize)
+
+N_TEST    = 20000
 ANOM_RATE = 0.20          # test kümesinde arıza oranı
-SEED     = 20260703
+SEED      = 20260703      # eğitim tohumundan (42) farklı
 
-# ── Etiketli, bağımsız test kümesi üret (eğitimden ayrı) ──────────────────────
-rng = np.random.default_rng(SEED)
-profiles = list(EQUIPMENT_PROFILES.values())
-X, y = [], []
-for _ in range(N_TEST):
-    prof = profiles[rng.integers(len(profiles))]
-    is_anom = rng.random() < ANOM_RATE
-    r = _anomaly_reading(prof) if is_anom else _normal_reading(prof)
-    X.append([r[f] for f in FEATURES])
-    y.append(int(is_anom))
-X = np.array(X); y = np.array(y)
 
-# ── Model + scaler ────────────────────────────────────────────────────────────
-with open("ml/scaler.pkl", "rb") as f:
-    scaler = pickle.load(f)
-with open("ml/isolation_forest.pkl", "rb") as f:
-    model = pickle.load(f)
+def evaluate() -> dict:
+    np.random.seed(SEED)
+    ids = list(EQUIPMENT_PROFILES)
+    Z, y = [], []
+    for _ in range(N_TEST):
+        eq_id = ids[np.random.randint(len(ids))]
+        is_anom = np.random.random() < ANOM_RATE
+        r = (_anomaly_reading if is_anom else _normal_reading)(EQUIPMENT_PROFILES[eq_id])
+        Z.append(normalize([r[f] for f in FEATURES], eq_id))
+        y.append(int(is_anom))
+    y = np.array(y)
 
-Xs      = scaler.transform(X)
-y_pred  = (model.predict(Xs) == -1).astype(int)
-scores  = -model.score_samples(Xs)     # yüksek = daha anormal
+    decision = _load()["model"].decision_function(build_features(np.array(Z)))
+    y_pred = (decision < 0).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y, y_pred).ravel()
 
-# ── Sonuçlar ──────────────────────────────────────────────────────────────────
-print("=" * 52)
-print("   Isolation Forest — Model Doğrulama (simülatör domaini)")
-print("=" * 52)
-print(f"  Test örneği: {N_TEST}  ·  gerçek arıza oranı: %{y.mean()*100:.1f}\n")
-print(classification_report(y, y_pred, target_names=["Normal", "Arıza"], digits=3))
+    return {
+        "n": N_TEST, "anomaly_rate": float(y.mean()),
+        "accuracy": accuracy_score(y, y_pred),
+        "roc_auc": roc_auc_score(y, -decision),
+        "recall": tp / (tp + fn), "precision": tp / (tp + fp),
+        "false_alarm_rate": fp / (fp + tn),
+        "confusion": (tn, fp, fn, tp),
+        "report": classification_report(y, y_pred, target_names=["Normal", "Arıza"], digits=3),
+    }
 
-cm = confusion_matrix(y, y_pred)
-tn, fp, fn, tp = cm.ravel()
-print("Karmaşıklık Matrisi:")
-print(f"  Gerçek Normal → Tahmin Normal : {tn:5d}  (dogru)")
-print(f"  Gerçek Normal → Tahmin Arıza  : {fp:5d}  (yanlış alarm)")
-print(f"  Gerçek Arıza  → Tahmin Normal : {fn:5d}  (kaçırılan)")
-print(f"  Gerçek Arıza  → Tahmin Arıza  : {tp:5d}  (dogru)\n")
 
-print(f"  Genel Doğruluk (Accuracy) : %{accuracy_score(y, y_pred)*100:.1f}")
-print(f"  ROC-AUC Skoru             : {roc_auc_score(y, scores):.3f}")
-print(f"  Hassasiyet (Recall/Arıza) : %{tp/(tp+fn)*100:.1f}  — arızaların yakalanma oranı")
-print(f"  Kesinlik (Precision/Arıza): %{tp/(tp+fp)*100:.1f}  — arıza dedik, gerçekten arıza")
-print(f"  Özgüllük (Specificity)    : %{tn/(tn+fp)*100:.1f}  — normallerin doğru geçme oranı")
-print("=" * 52)
+if __name__ == "__main__":
+    m = evaluate()
+    tn, fp, fn, tp = m["confusion"]
+    print("=" * 56)
+    print("  Isolation Forest — Model Doğrulama (simülatör verisi)")
+    print("=" * 56)
+    print(f"  Test örneği: {m['n']}  ·  arıza oranı: %{m['anomaly_rate'] * 100:.1f}\n")
+    print(m["report"])
+    print("Karmaşıklık Matrisi:")
+    print(f"  Gerçek Normal → Tahmin Normal : {tn:6d}")
+    print(f"  Gerçek Normal → Tahmin Arıza  : {fp:6d}  (yanlış alarm)")
+    print(f"  Gerçek Arıza  → Tahmin Normal : {fn:6d}  (kaçırılan)")
+    print(f"  Gerçek Arıza  → Tahmin Arıza  : {tp:6d}\n")
+    print(f"  Doğruluk            : %{m['accuracy'] * 100:.1f}")
+    print(f"  ROC-AUC             : {m['roc_auc']:.3f}")
+    print(f"  Duyarlılık (recall) : %{m['recall'] * 100:.1f}  — yakalanan arıza oranı")
+    print(f"  Kesinlik            : %{m['precision'] * 100:.1f}  — alarmların isabet oranı")
+    print(f"  Yanlış alarm oranı  : %{m['false_alarm_rate'] * 100:.2f}")
+    print("=" * 56)

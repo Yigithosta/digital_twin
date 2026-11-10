@@ -1,96 +1,130 @@
 """
 Isolation Forest tabanlı anomali tespiti.
-Model ml/train.py ile eğitilir, buradan yüklenir.
+
+Model, ekipman profiline göre normalize edilmiş (z-skor) özelliklerle çalışır.
+Sahadaki arızalar çoğunlukla tek bir sensörde başlar; ağaçların bunu kolay
+ayırabilmesi için z-skorlara iki özet özellik eklenir: en büyük mutlak sapma
+ve sapma vektörünün normu.
+
+Eğitim ml/train.py içindedir. Kayıtlı model yoksa ilk çağrıda aynı yöntemle
+eğitilir.
 """
 
-import numpy as np
-import pickle
 import os
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
+import pickle
 from typing import Dict
 
-IF_PATH     = "ml/isolation_forest.pkl"
-SCALER_PATH = "ml/scaler.pkl"
+import numpy as np
 
-_model:  IsolationForest  = None
-_scaler: StandardScaler   = None
+from data.simulator import (EQUIPMENT_PROFILES, FEATURES, critical_thresholds,
+                            normalize, resolve_equipment)
+
+IF_PATH = "ml/isolation_forest.pkl"
+
+_bundle: dict = None
+
+_LABELS = {
+    "temperature": ("sıcaklık", "°C", 1),
+    "vibration":   ("titreşim", "mm/s", 2),
+    "pressure":    ("basınç", "bar", 2),
+    "current":     ("akım", "A", 1),
+    "speed":       ("hız", "", 1),
+}
+
+
+def build_features(z: np.ndarray) -> np.ndarray:
+    """(n, 5) z-skor → (n, 7) model girdisi: z, max|z|, ||z||."""
+    z = np.atleast_2d(z)
+    return np.c_[z, np.abs(z).max(axis=1), np.linalg.norm(z, axis=1)]
+
+
+def fit_isolation_forest(n_samples: int = 8000, seed: int = 42) -> dict:
+    """
+    Modeli yalnızca normal çalışma verisiyle eğitir (yenilik tespiti).
+    Karar eşiği, normal verinin en uç %0.3'lük dilimine oturur; skor ölçeği
+    normal verinin karar fonksiyonu dağılımından kalibre edilir.
+    """
+    from sklearn.ensemble import IsolationForest
+    from data.simulator import _normal_reading
+
+    state = np.random.get_state()
+    np.random.seed(seed)
+    try:
+        rows = []
+        ids = list(EQUIPMENT_PROFILES)
+        for i in range(n_samples):
+            eq_id = ids[i % len(ids)]
+            r = _normal_reading(EQUIPMENT_PROFILES[eq_id])
+            rows.append(normalize([r[k] for k in FEATURES], eq_id))
+    finally:
+        np.random.set_state(state)
+    X = build_features(np.array(rows))
+
+    model = IsolationForest(n_estimators=300, max_samples=2048,
+                            contamination=0.003, random_state=seed)
+    model.fit(X)
+    scale = float(np.percentile(model.decision_function(X), 99))
+    return {"model": model, "score_scale": max(scale, 1e-6), "features": FEATURES}
+
+
+def save_bundle(bundle: dict, path: str = IF_PATH):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(bundle, f)
 
 
 def _load():
-    global _model, _scaler
-    if _model is None:
-        if os.path.exists(IF_PATH) and os.path.exists(SCALER_PATH):
-            with open(IF_PATH,     "rb") as f: _model  = pickle.load(f)
-            with open(SCALER_PATH, "rb") as f: _scaler = pickle.load(f)
-        else:
-            _bootstrap()
-
-
-def _bootstrap():
-    """Eğitilmiş model yoksa Kaggle verisiyle hızlıca eğit."""
-    global _model, _scaler
-    import pandas as pd
-    from sklearn.preprocessing import StandardScaler
-
-    DATA = "data/predictive_maintenance.csv"
-    if not os.path.exists(DATA):
-        raise FileNotFoundError(f"{DATA} bulunamadı. Önce ml/train.py çalıştırın.")
-
-    df = pd.read_csv(DATA)
-    df["temperature"] = df["Air temperature [K]"]  - 273.15
-    df["vibration"]   = df["Tool wear [min]"]
-    df["speed"]       = df["Rotational speed [rpm]"]
-    df["current"]     = df["Torque [Nm]"]
-    df["pressure"]    = (df["current"] / df["current"].max()) * 10
-
-    X = df[["temperature", "vibration", "pressure", "current", "speed"]].values
-    _scaler = StandardScaler()
-    X_s = _scaler.fit_transform(X)
-
-    _model = IsolationForest(
-        n_estimators=200,
-        contamination=float(df["Target"].mean()),
-        random_state=42,
-    )
-    _model.fit(X_s)
-
-    os.makedirs("ml", exist_ok=True)
-    with open(IF_PATH,     "wb") as f: pickle.dump(_model,  f)
-    with open(SCALER_PATH, "wb") as f: pickle.dump(_scaler, f)
+    global _bundle
+    if _bundle is None:
+        loaded = None
+        if os.path.exists(IF_PATH):
+            with open(IF_PATH, "rb") as f:
+                loaded = pickle.load(f)
+        if not isinstance(loaded, dict) or "score_scale" not in loaded:
+            loaded = fit_isolation_forest()
+            save_bundle(loaded)
+        _bundle = loaded
+    return _bundle
 
 
 def detect(reading: Dict) -> Dict:
-    _load()
+    bundle = _load()
+    eq_id = resolve_equipment(reading.get("equipment_id"), reading.get("equipment_type"))
+    if eq_id is None:
+        raise ValueError(f"Bilinmeyen ekipman: {reading.get('equipment_id')}")
 
-    x = np.array([[
-        reading["temperature"],
-        reading["vibration"],
-        reading["pressure"],
-        reading["current"],
-        reading["speed"],
-    ]])
-    x_scaled   = _scaler.transform(x)
-    prediction = _model.predict(x_scaled)[0]
-    raw_score  = float(_model.score_samples(x_scaled)[0])
+    z = normalize([reading[k] for k in FEATURES], eq_id).reshape(1, -1)
+    decision = float(bundle["model"].decision_function(build_features(z))[0])   # < 0 → anomali
 
-    # score_samples: daha negatif → daha anormal
-    # −0.5 eşiğini baz alarak 0-1'e normalize et
-    normalized = float(np.clip(1 - (raw_score + 0.5), 0.0, 1.0))
-    is_anomaly = prediction == -1
+    # 0.5 karar eşiğidir: normal okumalar 0–0.5, anomaliler 0.5–1 aralığına düşer.
+    score = float(np.clip(0.5 - decision / (2 * bundle["score_scale"]), 0.0, 1.0))
+    is_anomaly = decision < 0
 
     return {
         "is_anomaly":    bool(is_anomaly),
-        "anomaly_score": round(normalized, 4),
-        "description":   _describe(reading, normalized) if is_anomaly else None,
+        "anomaly_score": round(score, 4),
+        "description":   _describe(reading, eq_id, z[0], score) if is_anomaly else None,
     }
 
 
-def _describe(r: Dict, score: float) -> str:
+def _describe(reading: Dict, eq_id: str, z: np.ndarray, score: float) -> str:
+    """Normal aralığın dışına çıkan sensörleri, sapma büyüklüğüne göre sıralı yazar."""
+    profile = EQUIPMENT_PROFILES[eq_id]
+    crit = critical_thresholds(eq_id)
     issues = []
-    if r["temperature"] > 35:   issues.append(f"yüksek sıcaklık ({r['temperature']:.1f}°C)")
-    if r["vibration"]   > 200:  issues.append(f"aşırı takım aşınması ({r['vibration']:.0f} dk)")
-    if r["current"]     > 60:   issues.append(f"yüksek tork ({r['current']:.1f} Nm)")
-    if r["pressure"]    > 8:    issues.append(f"yüksek basınç ({r['pressure']:.1f} bar)")
-    if not issues:               issues.append("çoklu parametre sapması")
-    return f"Anomali: {', '.join(issues)} — skor {score:.3f}"
+    for i in np.argsort(-np.abs(z)):
+        key = FEATURES[i]
+        if abs(z[i]) < 3.5:
+            continue
+        name, unit, digits = _LABELS[key]
+        val = reading[key]
+        lo, hi = profile[key]
+        if z[i] > 0:
+            level = "kritik" if key in crit and val >= crit[key] else "yüksek"
+        else:
+            level = "düşük"
+        issues.append(f"{level} {name} ({val:.{digits}f} {unit}".rstrip()
+                      + f"; normal {lo:g}–{hi:g})")
+    if not issues:
+        issues.append("çoklu parametre sapması")
+    return f"Anomali: {', '.join(issues[:3])} — skor {score:.2f}"

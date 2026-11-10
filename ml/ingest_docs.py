@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pdfplumber
 from qdrant_client.models import PointStruct
-from app.services.rag_service import _get_encoder, _get_qdrant, _ensure_collection, COLLECTION
+from app.services import rag_service
+from app.services.rag_service import _get_encoder, _get_qdrant, _ensure_collection
 
 DEFAULT_PDFS = [
     "~/Downloads/lh517-specification-sheet-english.pdf",
@@ -67,10 +68,10 @@ def main(paths):
                 },
             ))
         if points:
-            q.upsert(collection_name=COLLECTION, points=points)
+            q.upsert(collection_name=rag_service.COLLECTION, points=points)
         print(f"  {name}: {len(chunks)} parça vektörize edildi")
         total += len(chunks)
-    info = q.get_collection(COLLECTION)
+    info = q.get_collection(rag_service.COLLECTION)
     print(f"\nToplam eklenen parça: {total} · Koleksiyon boyutu: {info.points_count}")
 
 

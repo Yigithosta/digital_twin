@@ -1,11 +1,13 @@
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from dotenv import load_dotenv
-import os
 import uuid
 
-load_dotenv()
+from app.config import QDRANT_HOST, QDRANT_PORT
+
+import logging
+
+log = logging.getLogger("qdrant")
 
 COLLECTION_NAME = "anomaly_logs"
 VECTOR_SIZE = 384
@@ -24,27 +26,43 @@ def _get_encoder() -> SentenceTransformer:
 def _get_qdrant() -> QdrantClient:
     global _qdrant
     if _qdrant is None:
-        _qdrant = QdrantClient(
-            host=os.getenv("QDRANT_HOST", "localhost"),
-            port=int(os.getenv("QDRANT_PORT", 6333)),
-        )
+        _qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=5)
         _ensure_collection(_qdrant)
     return _qdrant
 
 
+def resolve_collection(client: QdrantClient, name: str, size: int) -> str:
+    """
+    Koleksiyonu yoksa oluşturur ve kullanılacak adı döner. Aynı adla farklı
+    boyutta (başka bir embedding modeliyle oluşturulmuş) bir koleksiyon varsa
+    ona dokunmaz; boyut ekli ayrı bir koleksiyon kullanır.
+    """
+    existing = {c.name for c in client.get_collections().collections}
+    if name in existing:
+        current = client.get_collection(name).config.params.vectors.size
+        if current == size:
+            return name
+        log.warning("'%s' koleksiyonu %s boyutlu; %s boyut için '%s_%s' kullanılıyor.",
+                    name, current, size, name, size)
+        name = f"{name}_{size}"
+        if name in existing:
+            return name
+    client.create_collection(
+        collection_name=name,
+        vectors_config=VectorParams(size=size, distance=Distance.COSINE),
+    )
+    return name
+
+
 def _ensure_collection(client: QdrantClient):
-    existing = [c.name for c in client.get_collections().collections]
-    if COLLECTION_NAME not in existing:
-        client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-        )
+    global COLLECTION_NAME
+    COLLECTION_NAME = resolve_collection(client, COLLECTION_NAME, VECTOR_SIZE)
 
 
 def store_anomaly(description: str, metadata: dict) -> str:
     encoder = _get_encoder()
     qdrant = _get_qdrant()
-    embedding = encoder.encode(description).tolist()
+    embedding = encoder.encode(description, show_progress_bar=False).tolist()
     point_id = str(uuid.uuid4())
     qdrant.upsert(
         collection_name=COLLECTION_NAME,
@@ -56,7 +74,7 @@ def store_anomaly(description: str, metadata: dict) -> str:
 def search_similar(description: str, limit: int = 5) -> list:
     encoder = _get_encoder()
     qdrant = _get_qdrant()
-    embedding = encoder.encode(description).tolist()
+    embedding = encoder.encode(description, show_progress_bar=False).tolist()
     response = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=embedding,

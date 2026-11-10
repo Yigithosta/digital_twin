@@ -1,134 +1,62 @@
 """
-MQTT Sensör Abonesi (Subscriber)
----------------------------------
-Backend'in veri giriş katmanı. Mosquitto broker'a abone olur, `maden/+/sensor`
-topic'lerinden gelen her sensör mesajını alır ve işler:
+MQTT Sensör Abonesi
+-------------------
+Backend'in veri giriş katmanı. Mosquitto broker'a abone olur ve
+`maden/+/sensor` topic'lerinden gelen her mesajı ortak veri hattına
+(app.services.pipeline) aktarır.
 
-    MQTT mesajı → anomali tespiti (Isolation Forest)
-                → TimescaleDB'ye kayıt
-                → Redis'e son durum (canlı dashboard)
-                → anomali ise: AnomalyLog + n8n alarmı + Qdrant'a embedding
-
-paho-mqtt kendi thread'inde (loop_start) çalışır. Gelen her mesaj,
-asyncio.run_coroutine_threadsafe ile FastAPI'nin ana event loop'una aktarılır.
-Böylece async DB/Redis işlemleri güvenle yürütülür.
+paho-mqtt kendi thread'inde çalışır; gelen mesaj
+asyncio.run_coroutine_threadsafe ile FastAPI'nin olay döngüsüne devredilir.
+Broker'a ulaşılamazsa uygulama açılmaya devam eder, paho arka planda
+yeniden bağlanmayı dener.
 """
 
-import os
-import json
 import asyncio
+import json
+import logging
+
 import paho.mqtt.client as mqtt
 
-MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
-MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
-TOPIC = "maden/+/sensor"
+from app.config import MQTT_HOST, MQTT_PORT, MQTT_TOPIC
+
+log = logging.getLogger("mqtt")
 
 _client: mqtt.Client = None
 _loop: asyncio.AbstractEventLoop = None
-
-
-async def _handle_reading(reading: dict):
-    """Tek bir sensör okumasını işler (ana event loop'ta çalışır)."""
-    from datetime import datetime, timezone
-    from app.database import AsyncSessionLocal
-    from app.models.sensor import SensorReading, AnomalyLog
-    from app.services.anomaly_detector import detect as detect_anomaly
-    from app.services.n8n_notifier import notify
-    from app.services.embedding_service import store_anomaly
-    from app.redis_client import redis_client
-    from data.simulator import gas_status
-
-    eq_id = reading.get("equipment_id", "unknown")
-    result = detect_anomaly(reading)
-
-    # Metan (İSG) değerlendirmesi — mutlak eşik, ML'den bağımsız
-    gas_val = float(reading.get("gas", 0.0))
-    gas_eval = gas_status(gas_val)
-    gas_alarm = gas_eval["seviye"] != "NORMAL"
-
-    async with AsyncSessionLocal() as db:
-        db.add(SensorReading(
-            equipment_id   = eq_id,
-            equipment_type = reading.get("equipment_type"),
-            temperature    = reading["temperature"],
-            vibration      = reading["vibration"],
-            pressure       = reading["pressure"],
-            current        = reading["current"],
-            speed          = reading["speed"],
-            gas            = gas_val,
-            is_anomaly     = result["is_anomaly"],
-            anomaly_score  = result["anomaly_score"],
-        ))
-
-        if result["is_anomaly"]:
-            db.add(AnomalyLog(
-                equipment_id   = eq_id,
-                equipment_type = reading.get("equipment_type"),
-                anomaly_score  = result["anomaly_score"],
-                description    = result["description"],
-            ))
-
-            payload = {
-                "equipment_id":  eq_id,
-                "anomaly_score": result["anomaly_score"],
-                "description":   result["description"],
-                "temperature":   reading["temperature"],
-                "time":          datetime.now(timezone.utc).isoformat(),
-            }
-            loop = asyncio.get_event_loop()
-            loop.run_in_executor(None, notify, payload)
-            loop.run_in_executor(
-                None, store_anomaly,
-                result["description"] or "anomali",
-                {"equipment_id": eq_id, "score": result["anomaly_score"]},
-            )
-
-        # İSG metan alarmı — anomaliden bağımsız güvenlik kaydı + bildirim
-        if gas_alarm:
-            db.add(AnomalyLog(
-                equipment_id   = eq_id,
-                equipment_type = reading.get("equipment_type"),
-                anomaly_score  = 1.0,
-                description    = f"İSG METAN {gas_eval['seviye']}: {gas_eval['mesaj']}",
-            ))
-            asyncio.get_event_loop().run_in_executor(None, notify, {
-                "equipment_id":  eq_id,
-                "tip":           "isg_metan",
-                "seviye":        gas_eval["seviye"],
-                "gas":           gas_val,
-                "description":   gas_eval["mesaj"],
-                "time":          datetime.now(timezone.utc).isoformat(),
-            })
-
-        await db.commit()
-
-    # Redis: canlı dashboard için son durum (60 sn TTL)
-    await redis_client.setex(
-        f"latest:{eq_id}", 60,
-        json.dumps({**reading, **result, "gas_status": gas_eval}),
-    )
+_received = 0
 
 
 def _on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
-        client.subscribe(TOPIC, qos=1)
-        print(f"MQTT subscriber bağlandı → {MQTT_HOST}:{MQTT_PORT}  (abone: {TOPIC})")
+        client.subscribe(MQTT_TOPIC, qos=1)
+        log.info("MQTT abonesi bağlandı → %s:%s (%s)", MQTT_HOST, MQTT_PORT, MQTT_TOPIC)
     else:
-        print(f"MQTT bağlantı hatası: {reason_code}")
+        log.warning("MQTT bağlantı hatası: %s", reason_code)
+
+
+def _done(future):
+    exc = future.exception()
+    if exc:
+        log.warning("Okuma işlenemedi: %s", exc)
 
 
 def _on_message(client, userdata, msg):
-    """paho thread'inde çalışır → işi ana event loop'a devret."""
+    """paho thread'inde çalışır → işi ana olay döngüsüne devret."""
+    global _received
+    from app.services.pipeline import process_reading
     try:
         reading = json.loads(msg.payload.decode())
-    except Exception:
+        if "equipment_id" not in reading:
+            return
+    except (ValueError, UnicodeDecodeError):
         return
+    _received += 1
     if _loop and _loop.is_running():
-        asyncio.run_coroutine_threadsafe(_handle_reading(reading), _loop)
+        asyncio.run_coroutine_threadsafe(process_reading(reading), _loop).add_done_callback(_done)
 
 
 def start(loop: asyncio.AbstractEventLoop):
-    """FastAPI startup'ta çağrılır. Subscriber'ı arka thread'de başlatır."""
+    """Uygulama açılışında çağrılır; aboneyi arka thread'de başlatır."""
     global _client, _loop
     _loop = loop
     _client = mqtt.Client(
@@ -137,7 +65,8 @@ def start(loop: asyncio.AbstractEventLoop):
     )
     _client.on_connect = _on_connect
     _client.on_message = _on_message
-    _client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    _client.reconnect_delay_set(min_delay=1, max_delay=30)
+    _client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
     _client.loop_start()
 
 
@@ -150,11 +79,11 @@ def stop():
 
 
 def status() -> dict:
-    """Subscriber bağlantı durumu (dashboard için)."""
     connected = bool(_client and _client.is_connected())
     return {
-        "baglanti":  "aktif" if connected else "kapalı",
-        "broker":    f"{MQTT_HOST}:{MQTT_PORT}",
-        "topic":     TOPIC,
-        "protokol":  "MQTT 3.1.1 (Eclipse Mosquitto)",
+        "baglanti": "aktif" if connected else "kapalı",
+        "broker":   f"{MQTT_HOST}:{MQTT_PORT}",
+        "topic":    MQTT_TOPIC,
+        "protokol": "MQTT (Eclipse Mosquitto)",
+        "alinan_mesaj": _received,
     }

@@ -1,57 +1,66 @@
-"""
-RAG (Teknik Asistan) endpoint'leri.
-Sandvik LH517 dokümantasyonu üzerinde semantik arama.
-"""
+"""RAG (Teknik Asistan): Sandvik LH517 dokümantasyonu üzerinde semantik arama."""
 
-from fastapi import APIRouter
-from pydantic import BaseModel
-from typing import Optional
-from app.services.rag_service import query, query_by_anomaly, index_knowledge
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from app.services import rag_service
 
 router = APIRouter(prefix="/rag", tags=["RAG Teknik Asistan"])
 
 
 class SoruRequest(BaseModel):
-    soru: str
-    limit: Optional[int] = 3
+    soru: str = Field(min_length=2, max_length=500)
+    limit: int = Field(default=3, ge=1, le=10)
+
+
+def _unavailable(exc: Exception):
+    raise HTTPException(503, "Bilgi tabanına (Qdrant) ulaşılamıyor") from exc
 
 
 @router.get("/status")
-async def status():
+def status():
     """Bilgi tabanı durumu."""
-    from app.services.rag_service import _get_qdrant, COLLECTION
-    q = _get_qdrant()
     try:
-        info = q.get_collection(COLLECTION)
-        return {
-            "durum":         "aktif",
-            "koleksiyon":    COLLECTION,
-            "toplam_belge":  info.points_count,
-            "model":         "all-MiniLM-L6-v2",
-        }
+        info = rag_service._get_qdrant().get_collection(rag_service.COLLECTION)
     except Exception:
-        return {"durum": "koleksiyon bulunamadı"}
+        return {"durum": "kullanılamıyor", "koleksiyon": rag_service.COLLECTION}
+    return {
+        "durum":        "aktif",
+        "koleksiyon":   rag_service.COLLECTION,
+        "toplam_belge": info.points_count,
+        "model":        "text-embedding-3-small" if rag_service.EMBEDDING_BACKEND == "openai"
+                        else "all-MiniLM-L6-v2",
+    }
 
 
 @router.post("/indeks")
-async def indeks_olustur():
-    """Sandvik bilgi tabanını Qdrant'a yükle."""
-    index_knowledge()
-    return {"mesaj": "Bilgi tabanı başarıyla yüklendi."}
+def indeks_olustur():
+    """Küratörlü bilgi tabanını Qdrant'a yükle."""
+    try:
+        rag_service.index_knowledge()
+    except Exception as exc:
+        _unavailable(exc)
+    return {"mesaj": "Bilgi tabanı yüklendi."}
 
 
 @router.post("/sor")
-async def sor(req: SoruRequest):
-    """Teknik soru sor, Sandvik dokümantasyonundan yanıt al."""
-    results = query(req.soru, limit=req.limit)
+def sor(req: SoruRequest):
+    """Teknik soru sor; dokümantasyondan en ilgili bölümleri getir."""
+    try:
+        results = rag_service.query(req.soru, limit=req.limit)
+    except Exception as exc:
+        _unavailable(exc)
     return {
-        "soru":    req.soru,
+        "soru":     req.soru,
         "sonuclar": results,
-        "kaynak":  "Sandvik LH517 / LH410 Teknik Dokümantasyon",
+        "kaynak":   "Sandvik LH517 Teknik Dokümantasyon",
     }
 
 
 @router.get("/anomali-asistan")
-async def anomali_asistan(ekipman: str, aciklama: str):
-    """Anomali tespitinde otomatik teknik öneri al."""
-    return query_by_anomaly(ekipman, aciklama)
+def anomali_asistan(ekipman: str, aciklama: str):
+    """Anomali açıklamasına göre ilgili bakım bilgisini getir."""
+    try:
+        return rag_service.query_by_anomaly(ekipman, aciklama)
+    except Exception as exc:
+        _unavailable(exc)

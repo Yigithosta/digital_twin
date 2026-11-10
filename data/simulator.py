@@ -1,7 +1,18 @@
+"""
+Saha sensör simülatörü.
+
+Her ekipmanın normal çalışma aralığı EQUIPMENT_PROFILES'ta tanımlıdır. Modeller
+ham değerle değil, bu profile göre normalize edilmiş (z-skor) özelliklerle
+çalışır; böylece farklı ölçekteki ekipmanlar (1.5 m/s bant hızı, 1470 rpm pompa)
+tek modelle değerlendirilir ve yeni ekipman eklemek için profil tanımlamak yeter.
+"""
+
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-from typing import Dict
+from typing import Dict, Optional
+
+FEATURES = ["temperature", "vibration", "pressure", "current", "speed"]
 
 # Ekipman başına normal çalışma aralıkları
 EQUIPMENT_PROFILES = {
@@ -57,6 +68,37 @@ def gas_status(gas_pct: float) -> dict:
                 "mesaj": f"Metan %{gas_pct:.2f} — Eşik aşıldı, havalandırma kontrol edilmeli."}
     return {"seviye": "NORMAL", "renk": "yesil",
             "mesaj": f"Metan %{gas_pct:.2f} — Güvenli aralık."}
+
+
+# ── Profil istatistikleri / normalizasyon ────────────────────────────────────
+
+def resolve_equipment(equipment_id: str, equipment_type: Optional[str] = None) -> Optional[str]:
+    """Bilinen bir ekipman kimliği döner; kimlik tanınmıyorsa tipe göre eşleştirir."""
+    if equipment_id in EQUIPMENT_PROFILES:
+        return equipment_id
+    for eq_id, profile in EQUIPMENT_PROFILES.items():
+        if profile["type"] == equipment_type:
+            return eq_id
+    return None
+
+
+def profile_stats(equipment_id: str):
+    """Özellik sırasıyla (ortalama, sigma) dizileri. Aralık ≈ ortalama ± 3 sigma."""
+    profile = EQUIPMENT_PROFILES[equipment_id]
+    mean = np.array([(profile[k][0] + profile[k][1]) / 2 for k in FEATURES])
+    sigma = np.array([(profile[k][1] - profile[k][0]) / 6 for k in FEATURES])
+    return mean, sigma
+
+
+def normalize(values, equipment_id: str) -> np.ndarray:
+    """Ham sensör değerlerini (…, 5) ekipman profiline göre z-skora çevirir."""
+    mean, sigma = profile_stats(equipment_id)
+    return (np.asarray(values, dtype=float) - mean) / sigma
+
+
+def denormalize(z, equipment_id: str) -> np.ndarray:
+    mean, sigma = profile_stats(equipment_id)
+    return np.asarray(z, dtype=float) * sigma + mean
 
 
 def _normal_reading(profile: dict) -> dict:
@@ -117,6 +159,32 @@ def critical_thresholds(equipment_id: str) -> dict:
         lo, hi = profile[key]
         th[key] = round(hi * mult, 2)
     return th
+
+
+def operating_limits(equipment_id: str) -> dict:
+    """
+    Arayüz ve raporlar için sensör başına çalışma sınırları.
+      lo/hi : normal çalışma aralığı
+      warn  : normal dağılımın üst sınırı (aşılırsa uyarı)
+      crit  : arıza eşiği (aşılırsa kritik)
+    Basınç için aşağı yönlü (basınç kaybı) sınırlar da verilir.
+    """
+    profile = EQUIPMENT_PROFILES[equipment_id]
+    crit = critical_thresholds(equipment_id)
+    limits = {}
+    for key in ["temperature", "vibration", "pressure", "current"]:
+        lo, hi = profile[key]
+        limits[key] = {"lo": lo, "hi": hi,
+                       "warn": round(hi * 1.1, 2), "crit": crit[key]}
+    lo = profile["pressure"][0]
+    limits["pressure"]["warn_low"] = round(lo * 0.85, 2)
+    limits["pressure"]["crit_low"] = round(lo * 0.45, 2)
+    lo, hi = profile["speed"]
+    limits["speed"] = {"lo": lo, "hi": hi}
+    limits["gas"] = {"lo": 0.0, "hi": METHANE_LIMITS["uyari"],
+                     "warn": METHANE_LIMITS["uyari"], "crit": METHANE_LIMITS["tehlike"],
+                     "evacuate": METHANE_LIMITS["kritik"]}
+    return limits
 
 
 def generate_degradation_run(equipment_id: str, steps: int = None,
@@ -229,6 +297,71 @@ def generate_reading(equipment_id: str, force_anomaly: bool = False,
     return reading
 
 
+class LiveSimulator:
+    """
+    Zamansal sürekliliği olan canlı veri üreteci.
+
+    Her sensör, profil ortalaması etrafında AR(1) süreciyle salınır:
+        z_t = phi * z_{t-1} + sqrt(1 - phi^2) * eps
+    Durağan dağılım, bağımsız örneklemeyle (_normal_reading) aynıdır; yalnızca
+    ardışık okumalar birbirine bağlıdır. Bu sayede grafikler gerçek bir sensör
+    gibi akar ve LSTM'in öğrenebileceği bir zaman yapısı oluşur.
+    """
+
+    def __init__(self, phi: float = 0.85, seed: Optional[int] = None):
+        self.phi = phi
+        self.rng = np.random.default_rng(seed)
+        self._z = {eq: self.rng.normal(0, 1, len(FEATURES)) for eq in EQUIPMENT_PROFILES}
+        self._gas = {eq: 0.0 for eq in EQUIPMENT_PROFILES}
+        self._leak = {eq: 0.0 for eq in EQUIPMENT_PROFILES}
+
+    def step(self, equipment_id: str, force_anomaly: bool = False,
+             force_gas: bool = False, anomaly_rate: float = 0.015,
+             gas_rate: float = 0.003) -> Dict:
+        profile = EQUIPMENT_PROFILES[equipment_id]
+        noise = self.rng.normal(0, 1, len(FEATURES))
+        z = self.phi * self._z[equipment_id] + np.sqrt(1 - self.phi ** 2) * noise
+        self._z[equipment_id] = z
+
+        values = denormalize(z, equipment_id)
+        reading = {}
+        for key, val in zip(FEATURES, values):
+            lo, hi = profile[key]
+            reading[key] = round(float(np.clip(val, lo * 0.9, hi * 1.1)), 3)
+
+        if force_anomaly or self.rng.random() < anomaly_rate:
+            fault = self.rng.choice(["overheat", "vibration_spike", "overcurrent", "pressure_surge"])
+            if fault == "overheat":
+                reading["temperature"] = round(reading["temperature"] * self.rng.uniform(1.3, 1.6), 3)
+            elif fault == "vibration_spike":
+                reading["vibration"] = round(reading["vibration"] * self.rng.uniform(2.0, 3.5), 3)
+            elif fault == "overcurrent":
+                reading["current"] = round(reading["current"] * self.rng.uniform(1.4, 1.8), 3)
+            else:
+                reading["pressure"] = round(reading["pressure"] * self.rng.uniform(1.5, 2.0), 3)
+
+        # Metan: yavaş değişen fon seviyesi + seyrek kaçak olayı. Kaçak bir anda
+        # yükselir, havalandırmayla birkaç okuma boyunca sönümlenir.
+        lo, hi = profile.get("gas", (0.1, 0.6))
+        g = self.phi * self._gas[equipment_id] + np.sqrt(1 - self.phi ** 2) * self.rng.normal(0, 1)
+        self._gas[equipment_id] = g
+        base = float(np.clip((lo + hi) / 2 + g * (hi - lo) / 4, 0.0, hi * 1.2))
+        leak = self._leak[equipment_id] * 0.72
+        if force_gas or self.rng.random() < gas_rate:
+            leak = max(leak, float(self.rng.uniform(1.2, 2.6)) - base)
+        self._leak[equipment_id] = leak if leak > 0.02 else 0.0
+        reading["gas"] = round(base + self._leak[equipment_id], 3)
+
+        reading["equipment_id"] = equipment_id
+        reading["equipment_type"] = profile["type"]
+        return reading
+
+    def sequence(self, equipment_id: str, steps: int) -> np.ndarray:
+        """Anomalisiz ardışık okumalar (steps, 5) — model eğitimi için."""
+        rows = [self.step(equipment_id, anomaly_rate=0.0, gas_rate=0.0) for _ in range(steps)]
+        return np.array([[r[k] for k in FEATURES] for r in rows])
+
+
 def generate_training_data(n_samples: int = 2000) -> pd.DataFrame:
     rows = []
     equipment_ids = list(EQUIPMENT_PROFILES.keys())
@@ -245,12 +378,13 @@ def generate_training_data(n_samples: int = 2000) -> pd.DataFrame:
 
 def generate_historical(hours: int = 24, interval_seconds: int = 30) -> pd.DataFrame:
     rows = []
+    sim = LiveSimulator()
     now = datetime.now(timezone.utc)
     equipment_ids = list(EQUIPMENT_PROFILES.keys())
     t = now - timedelta(hours=hours)
     while t <= now:
         for eq_id in equipment_ids:
-            reading = generate_reading(eq_id)
+            reading = sim.step(eq_id)
             reading["time"] = t
             rows.append(reading)
         t += timedelta(seconds=interval_seconds)

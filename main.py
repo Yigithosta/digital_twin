@@ -1,161 +1,140 @@
 import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
+from sqlalchemy import text
 
-from app.database import init_db
-from app.routers import sensors, anomalies, predict
-from app.routers import dashboard
-from app.routers import rag
+from app import config
+from app.database import engine, init_db
+from app.redis_client import redis_client
+from app.routers import anomalies, dashboard, predict, rag, report, sensors
+from app.services import anomaly_detector, events, mqtt_subscriber
 
-EQUIPMENT_IDS = ["conveyor_01", "pump_01", "crusher_01"]
-_stream_task  = None
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("app")
+
+VERSION = "2.0.0"
 
 
-async def _live_stream():
+async def _field_simulator():
     """
-    Saha sensörlerini taklit eden MQTT yayıncısı.
-    Her 8 saniyede tüm ekipmanlar için okuma üretir ve MQTT broker'a yayınlar.
-    Veriyi tüketip işleyen taraf app.services.mqtt_subscriber'dır.
-    Akış:  simülatör → MQTT (maden/{eq}/sensor) → subscriber → DB/Redis/n8n/Qdrant
+    Saha sensörlerini taklit eden yayıncı: her turda tüm ekipmanlar için okuma
+    üretip MQTT'ye yayınlar; aboneden veri hattına akar.
+        simülatör → MQTT (maden/{eq}/sensor) → abone → veri hattı
+    Broker'a ulaşılamıyorsa okumalar doğrudan veri hattına verilir.
     """
-    from data.mqtt_publisher import make_client, publish_reading
-    import random
+    from app.services.pipeline import process_reading
+    from data.mqtt_publisher import make_client, publish_reading, _sim
 
-    # Yayıncı bağlanana kadar kısa bekleme
-    await asyncio.sleep(2)
-    client = await asyncio.get_event_loop().run_in_executor(None, make_client)
+    client = make_client()
     client.loop_start()
-    print("MQTT publisher başladı (canlı yayın).")
-
-    cycle = 0
+    await asyncio.sleep(2)
+    warned = False
     try:
         while True:
-            await asyncio.sleep(8)
-            cycle += 1
-            force_eq = random.choice(EQUIPMENT_IDS) if cycle % 15 == 0 else None
-            # ~her 25 döngüde bir rastgele ekipmanda metan kaçağı (İSG demo)
-            gas_eq = random.choice(EQUIPMENT_IDS) if cycle % 25 == 0 else None
-            for eq_id in EQUIPMENT_IDS:
-                publish_reading(client, eq_id,
-                                force_anomaly=(eq_id == force_eq),
-                                force_gas=(eq_id == gas_eq))
-    except asyncio.CancelledError:
-        pass
+            for eq_id in config.EQUIPMENT_IDS:
+                if client.is_connected():
+                    publish_reading(client, eq_id)
+                    warned = False
+                    continue
+                if not warned:
+                    log.warning("MQTT broker'a ulaşılamıyor; okumalar doğrudan işleniyor.")
+                    warned = True
+                try:
+                    await process_reading(_sim.step(eq_id))
+                except Exception as exc:
+                    log.warning("Okuma işlenemedi: %s", exc)
+            await asyncio.sleep(config.SIMULATOR_INTERVAL)
     finally:
         client.loop_stop()
         client.disconnect()
 
 
-async def _setup_n8n():
-    """n8n'de anomali alarm workflow'unu otomatik oluşturur."""
-    import urllib.request, json, base64, time
-    await asyncio.sleep(5)
-
-    workflow = {
-        "name": "Anomali Alarm",
-        "active": True,
-        "nodes": [
-            {
-                "id": "1", "name": "Webhook", "type": "n8n-nodes-base.webhook",
-                "typeVersion": 2, "position": [250, 300],
-                "parameters": {
-                    "path": "anomali-alarm",
-                    "responseMode": "onReceived",
-                    "httpMethod": "POST",
-                }
-            },
-            {
-                "id": "2", "name": "Log Anomali", "type": "n8n-nodes-base.set",
-                "typeVersion": 3, "position": [500, 300],
-                "parameters": {
-                    "mode": "manual",
-                    "assignments": {"assignments": [
-                        {"id": "1", "name": "mesaj", "type": "string",
-                         "value": "={{ 'ANOMALİ: ' + $json.equipment_id + ' | Skor: ' + $json.anomaly_score + ' | ' + $json.description }}"},
-                    ]}
-                }
-            },
-        ],
-        "connections": {
-            "Webhook": {"main": [[{"node": "Log Anomali", "type": "main", "index": 0}]]}
-        },
-    }
-
+def _warm_up():
+    """Embedding modelini ve bilgi tabanını arka planda hazırlar (ilk istek beklemesin)."""
+    from app.services import rag_service
+    from app.services.embedding_service import _get_encoder, _get_qdrant
     try:
-        cred = base64.b64encode(b"admin:admin123").decode()
-        req  = urllib.request.Request(
-            "http://localhost:5678/api/v1/workflows",
-            data=json.dumps(workflow).encode(),
-            headers={"Content-Type": "application/json", "Authorization": f"Basic {cred}",
-                     "X-N8N-API-KEY": ""},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=5)
-        print("n8n workflow oluşturuldu.")
-    except Exception:
-        pass
+        _get_encoder()
+        _get_qdrant()
+        rag_service.index_knowledge()
+    except Exception as exc:
+        log.warning("RAG bilgi tabanı hazırlanamadı (Qdrant çalışıyor mu?): %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    # Modelleri ön yükle (ilk istek yavaş olmasın)
-    from app.services.anomaly_detector import _load
-    from app.services.embedding_service import _get_encoder, _get_qdrant
-    from app.services.rag_service import index_knowledge
-    from app.services import mqtt_subscriber
-    _load()
-    await asyncio.get_event_loop().run_in_executor(None, _get_encoder)
-    await asyncio.get_event_loop().run_in_executor(None, _get_qdrant)
-    await asyncio.get_event_loop().run_in_executor(None, index_knowledge)
+    loop = asyncio.get_running_loop()
+    try:
+        await init_db()
+    except Exception as exc:
+        log.error("Veritabanına bağlanılamadı: %s", exc)
 
-    # MQTT abonesini başlat (veri giriş katmanı), ardından yayıncıyı
-    mqtt_subscriber.start(asyncio.get_event_loop())
+    anomaly_detector._load()
+    loop.run_in_executor(None, _warm_up)
+    mqtt_subscriber.start(loop)
+    simulator = asyncio.create_task(_field_simulator()) if config.SIMULATOR_ENABLED else None
 
-    global _stream_task
-    _stream_task = asyncio.create_task(_live_stream())
     yield
-    if _stream_task:
-        _stream_task.cancel()
+
+    if simulator:
+        simulator.cancel()
     mqtt_subscriber.stop()
 
 
 app = FastAPI(
     title="Maden Dijital İkiz API",
-    description="Maden ekipmanları için anomali tespiti ve tahmin sistemi",
-    version="1.0.0",
+    description="Maden ekipmanları için gerçek zamanlı izleme, anomali tespiti ve arıza tahmini",
+    version=VERSION,
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(sensors.router)
-app.include_router(anomalies.router)
-app.include_router(predict.router)
-app.include_router(dashboard.router)
-app.include_router(rag.router)
-from app.routers import report
-app.include_router(report.router)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+for module in (dashboard, sensors, anomalies, predict, rag, report):
+    app.include_router(module.router)
 
 
-@app.get("/")
-async def root():
+@app.get("/api", tags=["Sistem"])
+async def info():
+    return {"proje": "Maden Dijital İkiz", "versiyon": VERSION, "dokümantasyon": "/docs"}
+
+
+@app.get("/health", tags=["Sistem"])
+async def health():
+    """Bileşen bazında sağlık durumu."""
+    components = {"mqtt": mqtt_subscriber.status()["baglanti"] == "aktif"}
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        components["veritabani"] = True
+    except Exception:
+        components["veritabani"] = False
+    try:
+        components["redis"] = bool(await redis_client.ping())
+    except Exception:
+        components["redis"] = False
+    try:
+        from app.services.embedding_service import _get_qdrant
+        await asyncio.get_running_loop().run_in_executor(None, lambda: _get_qdrant().get_collections())
+        components["qdrant"] = True
+    except Exception:
+        components["qdrant"] = False
     return {
-        "proje":         "Maden Dijital İkiz",
-        "versiyon":      "1.0.0",
-        "durum":         "çalışıyor",
-        "dokümantasyon": "/docs",
+        "status": "ok" if components["veritabani"] else "degraded",
+        "versiyon": VERSION,
+        "bilesenler": components,
+        "canli_abone": events.subscriber_count(),
     }
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+# Panel (statik dosyalar) — API rotalarından sonra, kökte sunulur.
+app.mount("/", StaticFiles(directory="static", html=True), name="panel")

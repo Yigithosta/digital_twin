@@ -14,7 +14,8 @@ RAG Değerlendirme (İP-6: dokümana sadakat / hallucination kontrolü)
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.rag_service import query, _get_qdrant, COLLECTION
+from app.services import rag_service
+from app.services.rag_service import query, _get_qdrant
 
 # Soru → ilk 3 sonuçtan en az birinde geçmesi beklenen anahtar kelimeler
 TESTS = [
@@ -51,7 +52,7 @@ def main():
     print(f"  Ortalama top-1 skoru      : {sum(scores)/len(scores):.3f}")
     print(f"  Sadakat (grounded)        : {grounded}/{toplam_sonuc} = %100 "
           f"(retrieval-tabanlı mimari; üretilmiş metin yok → halüsinasyon yapısal olarak imkânsız)")
-    info = _get_qdrant().get_collection(COLLECTION)
+    info = _get_qdrant().get_collection(rag_service.COLLECTION)
     print(f"  Bilgi tabanı boyutu       : {info.points_count} vektör")
 
 

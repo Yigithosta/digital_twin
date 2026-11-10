@@ -1,11 +1,11 @@
 import redis.asyncio as redis
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
+from app.config import REDIS_HOST, REDIS_PORT
 
 redis_client = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", 6379)),
+    host=REDIS_HOST,
+    port=REDIS_PORT,
     decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2,
 )

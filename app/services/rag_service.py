@@ -3,15 +3,15 @@ RAG (Retrieval-Augmented Generation) Servisi
 Sandvik LH517 teknik dokümantasyonu üzerinde semantik arama.
 """
 
-import os
 import json
+import logging
+import os
 from typing import List, Dict
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from sentence_transformers import SentenceTransformer
-from dotenv import load_dotenv
 
-load_dotenv()
+from app.config import QDRANT_HOST, QDRANT_PORT
 
 # ── Embedding backend seçimi ─────────────────────────────────────────────────
 # Varsayılan: all-MiniLM-L6-v2 (yerel, ücretsiz, dışa bağımsız — "milli yazılım"
@@ -28,6 +28,8 @@ else:
     COLLECTION = "sandvik_knowledge"
     VECTOR_SIZE = 384
 
+log = logging.getLogger("rag")
+
 _encoder = None
 _qdrant: QdrantClient = None
 _indexed = False
@@ -40,7 +42,7 @@ class _Vec(list):
 
 class _OpenAIEncoder:
     """text-embedding-3-small için minimal istemci (ek paket gerekmez)."""
-    def encode(self, text: str):
+    def encode(self, text: str, **_):
         import urllib.request
         req = urllib.request.Request(
             "https://api.openai.com/v1/embeddings",
@@ -63,21 +65,14 @@ def _get_encoder():
 def _get_qdrant():
     global _qdrant
     if _qdrant is None:
-        _qdrant = QdrantClient(
-            host=os.getenv("QDRANT_HOST", "localhost"),
-            port=int(os.getenv("QDRANT_PORT", 6333)),
-        )
+        _qdrant = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=5)
     return _qdrant
 
 
 def _ensure_collection():
-    q = _get_qdrant()
-    existing = [c.name for c in q.get_collections().collections]
-    if COLLECTION not in existing:
-        q.create_collection(
-            collection_name=COLLECTION,
-            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-        )
+    global COLLECTION
+    from app.services.embedding_service import resolve_collection
+    COLLECTION = resolve_collection(_get_qdrant(), COLLECTION, VECTOR_SIZE)
 
 
 # ── Bilgi Tabanı ──────────────────────────────────────────────────────────────
@@ -218,7 +213,7 @@ def index_knowledge():
     points = []
     for i, doc in enumerate(KNOWLEDGE_BASE):
         text = f"{doc['title']}: {doc['content']}"
-        vector = enc.encode(text).tolist()
+        vector = enc.encode(text, show_progress_bar=False).tolist()
         points.append(PointStruct(
             id=i + 1,
             vector=vector,
@@ -234,7 +229,7 @@ def index_knowledge():
 
     q.upsert(collection_name=COLLECTION, points=points)
     _indexed = True
-    print(f"RAG: {len(points)} bilgi bloğu Qdrant'a yüklendi.")
+    log.info("RAG: %s bilgi bloğu '%s' koleksiyonuna yüklendi.", len(points), COLLECTION)
 
 
 def query(question: str, limit: int = 3) -> List[Dict]:
@@ -245,7 +240,7 @@ def query(question: str, limit: int = 3) -> List[Dict]:
     enc = _get_encoder()
     q   = _get_qdrant()
 
-    vector  = enc.encode(question).tolist()
+    vector  = enc.encode(question, show_progress_bar=False).tolist()
     response = q.query_points(
         collection_name=COLLECTION,
         query=vector,

@@ -4,6 +4,7 @@ env/
 
 .env
 .env.*
+!.env.example
 
 __pycache__/
 *.pyc
@@ -22,3 +23,6 @@ node_modules/
 
 *.sqlite3
 *.db
+
+# Isolation Forest ilk açılışta saniyeler içinde yeniden eğitilir (ml/train.py)
+ml/isolation_forest.pkl
