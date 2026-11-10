@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="tr" data-theme="dark">
+<html lang="tr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Maden Dijital İkiz</title>
 <meta name="description" content="Maden ekipmanları için gerçek zamanlı izleme, anomali tespiti ve arıza tahmini paneli">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f6fed'/%3E%3Cpath d='M7 22 16 8l9 14M11.5 22 16 15l4.5 7' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000' rx='6'/%3E%3Cpath d='M8 23 16 9l8 14' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linejoin='miter'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#000000">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="css/app.css">
-<script>
-  // Tema, ilk boyamadan önce uygulanır (parlama olmasın).
-  try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
-</script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
 <script type="module" src="js/app.js"></script>
@@ -43,72 +43,55 @@
   </defs>
 </svg>
 
+<a class="skip" href="#content">İçeriğe geç</a>
+
 <div class="app">
 
-  <!-- Kenar çubuğu -->
-  <aside class="sidebar">
-    <a class="brand" href="#/">
-      <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32"><path d="M7 22 16 8l9 14M11.5 22 16 15l4.5 7"/></svg>
-      </span>
-      <span class="brand-text">
-        <strong>Maden Dijital İkiz</strong>
-        <small>Ekipman izleme ve arıza tahmini</small>
-      </span>
+  <header class="masthead">
+    <a class="brand" href="#/" aria-label="Maden Dijital İkiz — Genel Bakış">
+      <span class="brand-name">Maden Dijital İkiz</span>
+      <span class="brand-site">İzleme · Arıza tahmini</span>
     </a>
 
-    <nav class="nav" aria-label="Ana menü">
-      <a href="#/" data-view="genel"><svg class="ico"><use href="#i-grid"/></svg><span>Genel Bakış</span></a>
-      <a href="#/ikiz" data-view="ikiz"><svg class="ico"><use href="#i-layers"/></svg><span>Dijital İkiz</span></a>
-      <a href="#/trend" data-view="trend"><svg class="ico"><use href="#i-activity"/></svg><span>Trendler</span></a>
-      <a href="#/bakim" data-view="bakim"><svg class="ico"><use href="#i-wrench"/></svg><span>Kestirimci Bakım</span></a>
-      <a href="#/alarmlar" data-view="alarmlar"><svg class="ico"><use href="#i-bell"/></svg><span>Alarmlar</span><b class="nav-count" id="nav-alarm-count" hidden></b></a>
-      <a href="#/asistan" data-view="asistan"><svg class="ico"><use href="#i-book"/></svg><span>Teknik Asistan</span></a>
-    </nav>
-
-    <div class="sys">
-      <div class="sys-title">Sistem</div>
-      <div class="sys-row"><span class="dot" id="sys-api"></span>API<em id="sys-api-t">—</em></div>
-      <div class="sys-row"><span class="dot" id="sys-mqtt"></span>MQTT<em id="sys-mqtt-t">—</em></div>
-      <div class="sys-row"><span class="dot" id="sys-live"></span>Canlı akış<em id="sys-live-t">—</em></div>
-      <div class="sys-row"><span class="dot" id="sys-rag"></span>Bilgi tabanı<em id="sys-rag-t">—</em></div>
-    </div>
-  </aside>
-
-  <!-- İçerik -->
-  <div class="main">
-    <header class="topbar">
-      <div class="topbar-title">
-        <h1 id="page-title">Genel Bakış</h1>
-        <p id="page-sub">Filonun anlık durumu</p>
-      </div>
-      <div class="topbar-actions">
-        <span class="chip chip-demo" id="demo-chip" hidden title="API'ye ulaşılamadı; veriler tarayıcıda üretilen örnek verilerdir">Demo verisi</span>
-        <span class="live" id="live-ind" title="Son veri zamanı"><span class="dot"></span><span id="live-text">Bağlanıyor…</span></span>
-        <div class="menu" id="scenario-menu">
-          <button class="btn" id="scenario-btn" aria-haspopup="true" aria-expanded="false">
-            <svg class="ico"><use href="#i-zap"/></svg>Senaryo
-          </button>
-          <div class="menu-pop" hidden>
-            <div class="menu-label">Test senaryosu çalıştır</div>
-            <select id="scenario-eq" class="input" aria-label="Ekipman"></select>
-            <button class="btn btn-block" data-scenario="anomaly"><svg class="ico"><use href="#i-alert"/></svg>Arıza enjekte et</button>
-            <button class="btn btn-block" data-scenario="gas"><svg class="ico"><use href="#i-wind"/></svg>Metan kaçağı</button>
-            <p class="menu-note">Seçilen ekipman için tek bir sıra dışı okuma üretilir ve tüm hat (tespit → alarm → bildirim) tetiklenir.</p>
-          </div>
-        </div>
-        <button class="btn btn-icon" id="theme-btn" title="Temayı değiştir" aria-label="Temayı değiştir">
-          <svg class="ico ico-sun"><use href="#i-sun"/></svg><svg class="ico ico-moon"><use href="#i-moon"/></svg>
+    <div class="masthead-actions">
+      <span class="chip-demo" id="demo-chip" hidden title="API'ye ulaşılamadı; veriler tarayıcıda üretilen örnek verilerdir">Demo verisi</span>
+      <span class="live" id="live-ind" title="Son veri zamanı"><span class="dot"></span><span id="live-text">Bağlanıyor…</span></span>
+      <div class="menu" id="scenario-menu">
+        <button class="btn" id="scenario-btn" aria-haspopup="true" aria-expanded="false">
+          <svg class="ico" aria-hidden="true"><use href="#i-zap"/></svg>Test senaryosu
         </button>
+        <div class="menu-pop" hidden>
+          <label class="menu-label" for="scenario-eq">Ekipman</label>
+          <select id="scenario-eq" class="input"></select>
+          <button class="btn btn-block" data-scenario="anomaly"><svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>Arıza enjekte et</button>
+          <button class="btn btn-block" data-scenario="gas"><svg class="ico" aria-hidden="true"><use href="#i-wind"/></svg>Metan kaçağı</button>
+          <p class="menu-note">Seçilen ekipman için tek bir sıra dışı okuma üretilir; tespit → alarm → bildirim hattının tamamı tetiklenir.</p>
+        </div>
       </div>
-    </header>
+    </div>
+  </header>
+
+  <nav class="tabs nav" aria-label="Ana menü">
+    <a href="#/" data-view="genel">Genel Bakış</a>
+    <a href="#/ikiz" data-view="ikiz">Dijital İkiz</a>
+    <a href="#/trend" data-view="trend">Trendler</a>
+    <a href="#/bakim" data-view="bakim">Kestirimci Bakım</a>
+    <a href="#/alarmlar" data-view="alarmlar">Alarmlar<b class="nav-count" id="nav-alarm-count" hidden></b></a>
+    <a href="#/asistan" data-view="asistan">Teknik Asistan</a>
+  </nav>
+
+  <div class="main">
+    <div class="pagehead">
+      <h1 id="page-title">Genel Bakış</h1>
+      <p id="page-sub">Filonun anlık durumu</p>
+    </div>
 
     <div class="banner" id="isg-banner" hidden role="alert">
-      <svg class="ico"><use href="#i-alert"/></svg>
+      <svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>
       <div><strong id="isg-title"></strong><span id="isg-sub"></span></div>
     </div>
 
-    <main class="content">
+    <main class="content" id="content" tabindex="-1">
 
       <!-- ── Genel Bakış ── -->
       <section class="view" id="view-genel">
@@ -131,7 +114,7 @@
           <div class="panel">
             <div class="panel-head">
               <h2>Son Alarmlar</h2>
-              <a class="link" href="#/alarmlar">Tümü <svg class="ico"><use href="#i-arrow"/></svg></a>
+              <a class="link" href="#/alarmlar">Tümü <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a>
             </div>
             <ul class="feed" id="ov-alarms"></ul>
           </div>
@@ -177,9 +160,9 @@
             </svg>
             <div class="twin-hud"><span id="twin-crumb">Maden sahası</span><span class="sep"></span><span id="twin-zoom">1.0×</span></div>
             <div class="twin-ctl">
-              <button class="btn btn-icon" id="twin-in" title="Yakınlaştır" aria-label="Yakınlaştır"><svg class="ico"><use href="#i-plus"/></svg></button>
-              <button class="btn btn-icon" id="twin-out" title="Uzaklaştır" aria-label="Uzaklaştır"><svg class="ico"><use href="#i-minus"/></svg></button>
-              <button class="btn btn-icon" id="twin-reset" title="Tüm saha" aria-label="Tüm saha"><svg class="ico"><use href="#i-expand"/></svg></button>
+              <button class="btn btn-icon" id="twin-in" title="Yakınlaştır" aria-label="Yakınlaştır"><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></button>
+              <button class="btn btn-icon" id="twin-out" title="Uzaklaştır" aria-label="Uzaklaştır"><svg class="ico" aria-hidden="true"><use href="#i-minus"/></svg></button>
+              <button class="btn btn-icon" id="twin-reset" title="Tüm saha" aria-label="Tüm saha"><svg class="ico" aria-hidden="true"><use href="#i-expand"/></svg></button>
             </div>
             <div class="twin-hint">Tekerlek: yakınlaştır · Sürükle: kaydır · Ekipmana tıkla: odaklan</div>
           </div>
@@ -206,7 +189,7 @@
       <section class="view" id="view-bakim" hidden>
         <div class="section-head">
           <h2>Kalan Faydalı Ömür</h2>
-          <button class="btn btn-sm" id="rul-refresh"><svg class="ico"><use href="#i-refresh"/></svg>Yenile</button>
+          <button class="btn btn-sm" id="rul-refresh"><svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg>Yenile</button>
         </div>
         <div class="cards" id="rul-cards"></div>
 
@@ -241,8 +224,8 @@
           </div>
           <select class="input" id="al-eq" aria-label="Ekipman filtresi"></select>
           <span class="spacer"></span>
-          <button class="btn" id="al-resolve-all"><svg class="ico"><use href="#i-check"/></svg>Tümünü çözüldü işaretle</button>
-          <a class="btn" id="al-pdf" href="report/anomali-pdf" download><svg class="ico"><use href="#i-download"/></svg>PDF rapor</a>
+          <button class="btn" id="al-resolve-all"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Tümünü çözüldü işaretle</button>
+          <a class="btn" id="al-pdf" href="report/anomali-pdf" download><svg class="ico" aria-hidden="true"><use href="#i-download"/></svg>PDF rapor</a>
         </div>
         <div class="panel">
           <div class="table-wrap">
@@ -258,7 +241,7 @@
       <section class="view" id="view-asistan" hidden>
         <div class="panel assistant">
           <form class="ask" id="rag-form">
-            <svg class="ico"><use href="#i-search"/></svg>
+            <svg class="ico" aria-hidden="true"><use href="#i-search"/></svg>
             <input id="rag-q" type="search" autocomplete="off" placeholder="Örn. hidrolik basınç düşüklüğü neden olur?" aria-label="Teknik soru">
             <button class="btn btn-primary" type="submit">Ara</button>
           </form>
@@ -278,13 +261,22 @@
 
     </main>
   </div>
+
+  <footer class="statusbar" aria-label="Sistem durumu">
+    <span class="sys-row"><span class="dot" id="sys-api"></span>API <em id="sys-api-t">—</em></span>
+    <span class="sys-row"><span class="dot" id="sys-mqtt"></span>MQTT <em id="sys-mqtt-t">—</em></span>
+    <span class="sys-row"><span class="dot" id="sys-live"></span>Akış <em id="sys-live-t">—</em></span>
+    <span class="sys-row"><span class="dot" id="sys-rag"></span>Bilgi tabanı <em id="sys-rag-t">—</em></span>
+    <span class="spacer"></span>
+    <span class="statusbar-meta">TEKNOFEST · Kestirimci bakım paneli</span>
+  </footer>
 </div>
 
 <!-- Bakım önerisi çekmecesi -->
 <div class="drawer" id="drawer" hidden>
   <div class="drawer-back" data-close></div>
   <div class="drawer-body" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
-    <header><h2 id="drawer-title">Bakım önerisi</h2><button class="btn btn-icon" data-close aria-label="Kapat"><svg class="ico"><use href="#i-x"/></svg></button></header>
+    <header><h2 id="drawer-title">Bakım önerisi</h2><button class="btn btn-icon" data-close aria-label="Kapat"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button></header>
     <div id="drawer-content"></div>
   </div>
 </div>

@@ -44,7 +44,7 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const timeOf = (iso) => new Date(iso).toLocaleTimeString("tr-TR");
 const dateTime = (iso) => new Date(iso).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const icon = (name) => `<svg class="ico"><use href="#i-${name}"/></svg>`;
+const icon = (name) => `<svg class="ico" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const eqName = (id) => S.byId[id]?.name || id;
 const worst = (levels) => (levels.includes("crit") ? "crit" : levels.includes("warn") ? "warn" : "ok");
 
@@ -96,7 +96,7 @@ const isGasAlarm = (a) => (a.description || "").startsWith("İSG METAN");
 const charts = new Set();
 
 function chartTheme() {
-  return { grid: css("--border"), text: css("--muted"), accent: css("--accent"), warn: css("--warn"), crit: css("--crit"), surface: css("--surface") };
+  return { grid: css("--grid"), text: css("--muted"), accent: css("--series"), warn: css("--warn"), crit: css("--crit"), surface: css("--surface"), mono: css("--mono") };
 }
 
 function lineChart(canvas) {
@@ -113,11 +113,15 @@ function lineChart(canvas) {
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: { filter: (item) => !item.dataset.threshold, displayColors: false },
+        tooltip: {
+          filter: (item) => !item.dataset.threshold, displayColors: false,
+          backgroundColor: t.surface, borderColor: t.grid, borderWidth: 1, cornerRadius: 6, padding: 8,
+          titleColor: t.text, bodyColor: t.accent, titleFont: { family: t.mono, size: 10.5, weight: "400" }, bodyFont: { family: t.mono, size: 12 },
+        },
       },
       scales: {
-        x: { grid: { display: false }, border: { color: t.grid }, ticks: { color: t.text, maxTicksLimit: 6, maxRotation: 0, font: { size: 11 } } },
-        y: { grid: { color: t.grid }, border: { display: false }, ticks: { color: t.text, maxTicksLimit: 5, font: { size: 11 } } },
+        x: { grid: { display: false }, border: { color: t.grid }, ticks: { color: t.text, maxTicksLimit: 6, maxRotation: 0, font: { size: 11, family: t.mono } } },
+        y: { grid: { color: t.grid }, border: { display: false }, ticks: { color: t.text, maxTicksLimit: 5, font: { size: 11, family: t.mono } } },
       },
     },
   });
@@ -138,15 +142,15 @@ function setSeries(chart, series, opts = {}) {
   const datasets = [{
     label: opts.label || "",
     data: pad(series.values, fc.length),
-    borderColor: t.accent, backgroundColor: t.accent + "1f",
-    borderWidth: 1.8, tension: 0.3, fill: true, spanGaps: true,
+    borderColor: t.accent, backgroundColor: t.accent + "0f",
+    borderWidth: 1.4, tension: 0.25, fill: true, spanGaps: true,
     pointRadius: anomalies.map((a) => (a ? 3.5 : 0)).concat(Array(fc.length).fill(0)),
-    pointBackgroundColor: t.crit, pointBorderColor: t.crit, pointHoverRadius: 4,
+    pointBackgroundColor: t.crit, pointBorderColor: t.crit, pointHoverRadius: 3,
   }];
   if (fc.length) {
     datasets.push({
       label: "Tahmin", data: Array(Math.max(0, n - 1)).fill(null).concat(n ? [series.values[n - 1]] : [], fc),
-      borderColor: t.accent, borderWidth: 1.8, borderDash: [5, 4], tension: 0.3, pointRadius: 0, fill: false,
+      borderColor: t.accent, borderWidth: 1.4, borderDash: [5, 4], tension: 0.25, pointRadius: 0, fill: false,
     });
   }
   const max = Math.max(...series.values.filter((v) => v != null), ...fc, -Infinity);
@@ -167,15 +171,6 @@ function setSeries(chart, series, opts = {}) {
   chart.update();
 }
 
-function restyleCharts() {
-  const t = chartTheme();
-  charts.forEach((c) => {
-    c.options.scales.x.ticks.color = c.options.scales.y.ticks.color = t.text;
-    c.options.scales.x.border.color = c.options.scales.y.grid.color = t.grid;
-  });
-  refreshView(true);
-}
-
 function chartOpts(eq, key) {
   const lim = eq.limits[key] || {};
   const m = METRICS.find((x) => x.key === key);
@@ -193,43 +188,22 @@ function renderKpis() {
   const s = S.summary || {};
   const states = S.catalog.map((eq) => eqState(eq.id).level);
   const okCount = states.filter((l) => l === "ok").length;
-  const fleet = worst(states);
   const items = [
-    { label: "Filo durumu", value: `${okCount}<small>/ ${S.catalog.length} normal</small>`, cls: fleet, foot: fleet === "ok" ? "Tüm ekipmanlar normal aralıkta" : "Dikkat gerektiren ekipman var" },
-    { label: "Açık alarm", value: int(s.acik_alarm), cls: s.acik_alarm ? "crit" : "ok", foot: "Çözüldü işaretlenmemiş kayıt" },
-    { label: "Alarm (24 saat)", value: int(s.anomali_24h), foot: `Son 1 saatte ${int(s.anomali_1h)}` },
-    { label: "Normal çalışma", value: s.normal_oran == null ? "—" : `${fmt(s.normal_oran, 1)}<small>%</small>`, foot: "Son 24 saatteki okumalar" },
-    { label: "Toplam okuma", value: int(s.toplam_okuma), foot: `Son 24 saatte ${int(s.okuma_24h)}` },
+    { label: "Normal çalışan ekipman", value: `${okCount}<small>/ ${S.catalog.length}</small>`, cls: worst(states) },
+    { label: "Açık alarm", value: int(s.acik_alarm), cls: s.acik_alarm ? "crit" : "" },
+    { label: "Son 24 saatte alarm", value: int(s.anomali_24h) },
+    { label: "Normal çalışma oranı", value: s.normal_oran == null ? "—" : `${fmt(s.normal_oran, 1)}<small>%</small>` },
   ];
   $("kpis").innerHTML = items.map((k) => `
     <div class="kpi ${k.cls || ""}">
       <div class="kpi-label">${k.label}</div>
       <div class="kpi-value">${k.value}</div>
-      <div class="kpi-foot">${k.foot}</div>
     </div>`).join("");
 }
 
-const rangeText = (lim) => [lim.lo, lim.hi].map((v) => fmt(v, Number.isInteger(v) ? 0 : 1)).join("–");
-
-function tile(eq, d, m) {
-  const lim = eq.limits[m.key], v = d[m.key];
-  const st = metricState(eq, m.key, v);
-  const span = lim.hi - lim.lo;
-  const min = lim.lo - span * 0.35, max = lim.crit ?? lim.hi + span * 0.35;
-  const pct = (x) => clamp(((x - min) / (max - min)) * 100, 0, 100);
-  return `
-    <div class="tile ${st}">
-      <div class="tile-label"><span>${m.label}</span><span>${rangeText(lim)}</span></div>
-      <div class="tile-value num">${fmt(v, m.digits)}<small>${esc(eq.units[m.key])}</small></div>
-      <div class="range"><i class="band" style="left:${pct(lim.lo)}%;width:${pct(lim.hi) - pct(lim.lo)}%"></i><i class="mark" style="left:${pct(v)}%"></i></div>
-    </div>`;
-}
-
-function sparkline(id) {
-  const rows = (S.history[id] || []).slice(-60);
-  if (rows.length < 2) return "";
-  const pts = rows.map((r, i) => `${(i / (rows.length - 1)) * 100},${34 - clamp(r.anomaly_score, 0, 1) * 30 - 2}`);
-  return `<svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="100" y1="17" y2="17"/><path d="M${pts.join("L")}"/></svg>`;
+function reading(eq, d, m) {
+  const st = metricState(eq, m.key, d[m.key]);
+  return `<div class="reading ${st}"><dt>${m.label}</dt><dd>${fmt(d[m.key], m.digits)}<small>${esc(eq.units[m.key])}</small></dd></div>`;
 }
 
 function renderCard(eq) {
@@ -238,29 +212,18 @@ function renderCard(eq) {
   const el = $(`card-${eq.id}`);
   if (!el) return;
   el.className = `card ${st.level}`;
+  const head = `<div class="card-head"><div><h3>${esc(eq.name)}</h3><p>${esc(eq.zone)}</p></div><span class="pill ${st.level}">${st.label}</span></div>`;
   if (!d) {
-    el.innerHTML = `<div class="card-head"><div><h3>${esc(eq.name)}</h3><p>${esc(eq.zone)}</p></div><span class="pill off">Veri yok</span></div><div class="empty">Bu ekipmandan henüz okuma gelmedi.</div>`;
+    el.innerHTML = `${head}<div class="empty">Bu ekipmandan henüz okuma gelmedi.</div>`;
     return;
   }
-  const gasLvl = metricState(eq, "gas", d.gas);
-  const score = clamp(d.anomaly_score, 0, 1);
   const rul = S.rul[eq.id];
+  const gasLvl = metricState(eq, "gas", d.gas);
   el.innerHTML = `
-    <div class="card-head">
-      <div><h3>${esc(eq.name)}</h3><p>${esc(eq.zone)} · ${esc(eq.id)}</p></div>
-      <span class="pill ${st.level}">${st.label}</span>
-    </div>
-    <div class="tiles">${METRICS.slice(0, 4).map((m) => tile(eq, d, m)).join("")}</div>
-    <div class="meter">
-      <div class="meter-head"><span>Metan (CH₄) · ${esc(d.gas_status?.seviye || "")}</span><b>%${fmt(d.gas, 2)}</b></div>
-      <div class="bar"><i class="${gasLvl}" style="width:${clamp(d.gas / 2.5 * 100, 0, 100)}%"></i><u style="left:40%"></u><u style="left:60%"></u><u style="left:80%"></u></div>
-    </div>
-    <div class="meter">
-      <div class="meter-head"><span>Anomali skoru</span><b>${fmt(score, 2)}</b></div>
-      ${sparkline(eq.id)}
-    </div>
+    ${head}
+    <dl class="readings">${METRICS.slice(0, 4).map((m) => reading(eq, d, m)).join("")}</dl>
     <div class="card-foot">
-      <span>${rul?.rul_saat != null ? `Kalan ömür ≈ ${fmt(rul.rul_saat, 0)} sa · sağlık %${fmt(rul.saglik_yuzde, 0)}` : "Kalan ömür hesaplanıyor…"}</span>
+      <span>Metan <b class="${gasLvl}">%${fmt(d.gas, 2)}</b>${rul?.rul_saat != null ? ` · Kalan ömür <b>≈ ${fmt(rul.rul_saat, 0)} sa</b>` : ""}</span>
       <a class="link" href="#/ikiz" data-focus="${esc(eq.id)}">İkizde aç ${icon("arrow")}</a>
     </div>`;
 }
@@ -289,7 +252,7 @@ function alarmFeedItem(a) {
 }
 
 function renderOverviewAlarms() {
-  const list = S.alarms.slice(0, 6);
+  const list = S.alarms.slice(0, 5);
   $("ov-alarms").innerHTML = list.length ? list.map(alarmFeedItem).join("") : `<li class="empty">Kayıtlı alarm yok.</li>`;
 }
 
@@ -654,19 +617,14 @@ function route() {
   S.view = VIEWS[name] ? name : "genel";
   document.querySelectorAll(".view").forEach((v) => { v.hidden = v.id !== `view-${S.view}`; });
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === S.view));
+  document.querySelectorAll(".nav a").forEach((a) => (a.dataset.view === S.view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   [$("page-title").textContent, $("page-sub").textContent] = VIEWS[S.view];
+  document.title = S.view === "genel" ? "Maden Dijital İkiz" : `${VIEWS[S.view][0]} · Maden Dijital İkiz`;
   refreshView(true);
 }
 
 function bindEvents() {
   window.addEventListener("hashchange", route);
-
-  $("theme-btn").onclick = () => {
-    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem("theme", next); } catch (e) { /* gizli sekme */ }
-    restyleCharts();
-  };
 
   const menu = $("scenario-menu"), pop = menu.querySelector(".menu-pop");
   $("scenario-btn").onclick = () => { pop.hidden = !pop.hidden; $("scenario-btn").setAttribute("aria-expanded", String(!pop.hidden)); };
