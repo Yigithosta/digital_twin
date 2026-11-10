@@ -23,9 +23,15 @@
 
 <br/>
 
-| 🎯 Anomali Doğruluğu | 📈 ROC-AUC | 🔎 RAG hit@3 | 📚 Teknik Doküman Vektörü |
-|:---:|:---:|:---:|:---:|
-| **%90.6** | **0.983** | **%90** | **147** |
+| 🎯 Anomali Doğruluğu | 🚨 Yakalanan Arıza | 📈 ROC-AUC | ⏳ RUL Hatası (MAE) | 🔎 RAG hit@3 |
+|:---:|:---:|:---:|:---:|:---:|
+| **%99.1** | **%96.7** | **0.996** | **7.5 saat** | **%90** |
+
+<sub>Değerler simülasyon verisi üzerinde, eğitimde kullanılmayan test kümelerinde ölçülmüştür — ayrıntı: <a href="#-model-değerlendirme">Model Değerlendirme</a></sub>
+
+<br/><br/>
+
+<img src="docs/img/genel-bakis.png" alt="Genel Bakış paneli" width="92%"/>
 
 </div>
 
@@ -53,13 +59,13 @@ Yeraltı madenlerinde bir konveyörün, pompanın ya da kırıcının **plansız
 <td width="50%" valign="top">
 
 ### 🛰️ Gerçek Zamanlı Veri Hattı
-Simülatör → **MQTT** (`maden/{ekipman}/sensor`) → abone → **TimescaleDB** + **Redis**. Her 8 saniyede 3 ekipman için sıcaklık, titreşim, basınç, akım, hız ve gaz okuması.
+Simülatör → **MQTT** (`maden/{ekipman}/sensor`) → abone → **TimescaleDB** + **Redis**. Her 5 saniyede 3 ekipman için sıcaklık, titreşim, basınç, akım, hız ve gaz okuması; panele **SSE** ile anlık iletilir.
 
 </td>
 <td width="50%" valign="top">
 
 ### 🧠 Anomali Tespiti
-Kaggle *Predictive Maintenance* verisiyle eğitilmiş **Isolation Forest** (200 ağaç). Her okuma anında skorlanır; anomaliler Qdrant'a gömülerek **benzer geçmiş arızalar** aranabilir hâle gelir.
+Yalnızca normal çalışma verisiyle eğitilen **Isolation Forest** (300 ağaç). Girdiler ekipman profiline göre normalize edildiği için tek model tüm ekipmanları değerlendirir. Anomaliler Qdrant'a gömülerek **benzer geçmiş arızalar** aranabilir hâle gelir.
 
 </td>
 </tr>
@@ -67,13 +73,13 @@ Kaggle *Predictive Maintenance* verisiyle eğitilmiş **Isolation Forest** (200 
 <td valign="top">
 
 ### 🔮 Tahmin & RUL
-2 katmanlı **LSTM** (64 gizli birim, 20 adımlık pencere) sonraki sensör değerlerini; ayrı bir LSTM ise **Kalan Faydalı Ömrü** saat cinsinden tahmin eder. Apple Silicon'da **MPS** hızlandırma.
+2 katmanlı **LSTM** (64 gizli birim, 20 adımlık pencere) sonraki sensör değerlerini; ayrı bir LSTM ise arızaya giden serilerden **Kalan Faydalı Ömrü** saat cinsinden tahmin eder.
 
 </td>
 <td valign="top">
 
 ### 📖 RAG Teknik Asistan
-**Sandvik LH517** spesifikasyon ve servis dokümanlarından çıkarılan 133 parça + küratörlü bilgi tabanı. Yerel `all-MiniLM-L6-v2` (ücretsiz, dışa bağımsız) ya da isteğe bağlı OpenAI embedding.
+**Sandvik LH517** için küratörlü bilgi tabanı; `ml/ingest_docs.py` ile servis PDF'leri de parçalanıp eklenebilir. Yerel `all-MiniLM-L6-v2` (ücretsiz, dışa bağımsız) ya da isteğe bağlı OpenAI embedding.
 
 </td>
 </tr>
@@ -81,13 +87,13 @@ Kaggle *Predictive Maintenance* verisiyle eğitilmiş **Isolation Forest** (200 
 <td valign="top">
 
 ### 🗺️ LOD Dijital İkiz Paneli
-Tek ekranda **Maden ⇄ Araç ⇄ Bileşen** seviyeleri arasında yakınlaşan *Level of Detail* görünümü; D3 + Chart.js ile canlı grafikler.
+**Maden ⇄ Ekipman ⇄ Sensör** seviyeleri arasında yakınlaşan *Level of Detail* haritası; her ekipman tipinin kendi şeması ve ekipmana özel uyarı/kritik eşikleri. Koyu/açık tema, mobil uyum.
 
 </td>
 <td valign="top">
 
 ### ☠️ İSG — Metan İzleme
-ML değil, **sabit yasal eşikler**: %1.0 uyarı · %1.5 elektrikli ekipmanı durdur · %2.0 **tahliye**.
+ML değil, **sabit yasal eşikler**: %1.0 uyarı · %1.5 elektrikli ekipmanı durdur · %2.0 **tahliye**. Alarm, seviye yükseldiğinde bir kez üretilir.
 
 </td>
 </tr>
@@ -106,6 +112,19 @@ TimescaleDB'ye bağlı hazır provisioning'li dashboard ile tarihsel trend anali
 </td>
 </tr>
 </table>
+
+---
+
+## 🖥️ Panel
+
+| Dijital İkiz | Trendler |
+|:---:|:---:|
+| <img src="docs/img/dijital-ikiz.png" alt="Dijital ikiz haritası"/> | <img src="docs/img/trendler.png" alt="Sensör trendleri"/> |
+| Saha haritasından ekipman şemasına, oradan sensöre yakınlaşma | Uyarı ve kritik eşikleriyle sensör geçmişi |
+
+| Kestirimci Bakım | |
+|:---:|:---|
+| <img src="docs/img/kestirimci-bakim.png" alt="Kestirimci bakım" width="100%"/> | **Genel Bakış** — filo durumu, ekipman kartları, canlı trend<br/>**Alarmlar** — filtreleme, çözüldü işaretleme, alarma özel bakım önerisi (RAG), PDF rapor<br/>**Teknik Asistan** — servis dokümantasyonunda anlamsal arama<br/>**Senaryo** — tek tıkla arıza ya da metan kaçağı enjekte ederek tüm hattı sınama<br/><br/>Sunucu yokken panel `?demo` parametresiyle tarayıcıda üretilen örnek veriyle de açılır. |
 
 ---
 
@@ -137,7 +156,7 @@ flowchart LR
     N8N --> SLACK["💬 Slack"]
 
     TS --> GRAF["📊 Grafana"]
-    RD --> DASH["🗺️ LOD Dashboard"]
+    IF -- "SSE /stream" --> DASH["🗺️ Panel"]
     TS --> DASH
 ```
 
@@ -155,9 +174,9 @@ cd digital_twin
 # 2) Sanal ortam + bağımlılıklar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pip install fpdf2 pdfplumber   # PDF rapor + doküman ingest
 
 # 3) Altyapıyı ayağa kaldır (TimescaleDB, Qdrant, Redis, Mosquitto, n8n, Grafana)
+cp .env.example .env
 docker compose up -d
 
 # 4) (Opsiyonel) Geçmiş veri yükle ve modelleri yeniden eğit
@@ -172,37 +191,13 @@ Ardından tarayıcıda:
 
 | | Adres |
 |---|---|
-| 🗺️ **Canlı Dijital İkiz Paneli** | http://localhost:8000/static/demo.html |
+| 🗺️ **Panel** | http://localhost:8000 |
 | 📘 **Swagger API Dokümanı** | http://localhost:8000/docs |
 | 📊 Grafana | http://localhost:3000 |
 | 🔁 n8n | http://localhost:5678 |
 | 🧲 Qdrant UI | http://localhost:6333/dashboard |
 
-<details>
-<summary>⚙️ <b>Ortam değişkenleri (<code>.env</code>)</b></summary>
-
-<br/>
-
-Tümü opsiyoneldir; verilmezse aşağıdaki varsayılanlar kullanılır.
-
-```env
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=digital_twin
-
-MQTT_HOST=localhost
-MQTT_PORT=1883
-
-N8N_WEBHOOK_URL=http://localhost:5678/webhook/anomali-alarm
-
-# local (MiniLM, varsayılan) | openai
-EMBEDDING_BACKEND=local
-# OPENAI_API_KEY=...
-```
-
-</details>
+> Tüm ayarlar isteğe bağlıdır ve `.env` dosyasından okunur; seçenekler [`.env.example`](.env.example) içinde açıklanmıştır. Altyapı servislerinden biri çalışmıyorsa API yine açılır; durum `GET /health` ile ve panelin *Sistem* kutusundan izlenir.
 
 ---
 
@@ -210,39 +205,49 @@ EMBEDDING_BACKEND=local
 
 | Modül | Uç Nokta | Açıklama |
 |---|---|---|
+| **Sistem** | `GET /health` | Bileşen bazında sağlık (veritabanı, MQTT, Redis, Qdrant) |
+| | `GET /equipment` | Ekipman kataloğu: birimler ve sensör başına çalışma sınırları |
+| | `GET /stream` | Canlı akış (SSE): `reading` ve `alarm` olayları |
 | **Sensörler** | `POST /sensors/reading` | Yeni okuma al, anında anomali skorla |
-| | `GET /sensors/latest/{equipment_id}` | Son okuma |
-| | `GET /sensors/history/{equipment_id}` | Okuma geçmişi |
-| | `POST /sensors/simulate/{equipment_id}` | Simüle okuma üret |
-| **Anomaliler** | `GET /anomalies/` | Anomali kayıtları |
-| | `POST /anomalies/{id}/resolve` | Anomaliyi çözüldü işaretle |
+| | `GET /sensors/latest/{equipment_id}` · `/history/{equipment_id}` | Son okuma · geçmiş |
+| | `POST /sensors/simulate/{equipment_id}` | Test okuması üret (`force_anomaly`, `force_gas`) |
+| **Anomaliler** | `GET /anomalies/` | Alarm kayıtları (ekipman / durum filtresi) |
+| | `POST /anomalies/{id}/resolve` · `/anomalies/resolve-all` | Çözüldü işaretle |
 | | `GET /anomalies/similar` | Qdrant ile benzer geçmiş arızalar |
-| **Tahmin** | `GET /predict/{equipment_id}` | LSTM ile sonraki değerler |
+| **Tahmin** | `GET /predict/{equipment_id}?steps=6` | LSTM ile sonraki adımlar |
 | | `GET /predict/rul/{equipment_id}` | Kalan Faydalı Ömür (RUL) |
 | **RAG** | `POST /rag/sor` | Teknik dokümana soru sor |
 | | `GET /rag/anomali-asistan` | Anomaliye göre ilgili bakım bilgisi |
 | | `GET /rag/status` · `POST /rag/indeks` | Bilgi tabanı durumu / yeniden indeksleme |
-| **Dashboard** | `GET /dashboard/summary` · `/latest-all` · `/recent-anomalies` | Panel özetleri |
-| | `GET /dashboard/timeseries/{equipment_id}/{metric}` | Zaman serisi |
-| | `GET /dashboard/mqtt-status` | MQTT bağlantı durumu |
+| **Panel** | `GET /dashboard/summary` · `/latest-all` · `/recent-anomalies` | Özetler |
+| | `GET /dashboard/timeseries/{equipment_id}/{metric}` | Zaman serisi (uzun aralıklar seyreltilir) |
 | **Rapor** | `GET /report/anomali-pdf` | Son 24 saat PDF raporu |
+
+Etkileşimli doküman: http://localhost:8000/docs
 
 ---
 
 ## 📏 Model Değerlendirme
 
 ```bash
-python ml/evaluate.py       # Isolation Forest — 4000 örneklik bağımsız etiketli test kümesi
+python ml/train.py          # üç modeli eğitir, doğrulama metriklerini yazar
+python ml/evaluate.py       # Isolation Forest — 20.000 örneklik bağımsız etiketli test kümesi
 python ml/evaluate_rag.py   # RAG — hit@3, ortalama benzerlik, dokümana sadakat
-python ml/ingest_docs.py    # Sandvik PDF'lerini parçala → embed → Qdrant
+python ml/ingest_docs.py    # Servis PDF'lerini parçala → embed → Qdrant
+pytest                      # birim ve API testleri (altyapı gerektirmez)
 ```
 
 | Model | Metrik | Sonuç |
 |---|---|---|
-| Isolation Forest | Doğruluk | **%90.6** |
-| Isolation Forest | ROC-AUC | **0.983** |
-| RAG (Sandvik LH517) | hit@3 | **%90** |
+| Isolation Forest | Doğruluk · ROC-AUC | **%99.1** · **0.996** |
+| Isolation Forest | Yakalanan arıza (recall) · Kesinlik | **%96.7** · **%98.4** |
+| Isolation Forest | Yanlış alarm oranı | **%0.37** |
+| LSTM tahminci | Doğrulama RMSE | **0.79 σ** (son değeri tekrar etme: 1.06 σ) |
+| LSTM RUL | Doğrulama MAE | **7.5 saat** (arızaya son 24 saatte **5.2 saat**) |
+| RAG (Sandvik LH517) | hit@3 | **%90** (10 soruluk küme) |
 | RAG | Halüsinasyon | Yapısal olarak engelli — yanıtlar yalnızca bilgi tabanından döner |
+
+> **Not:** Sistem şu an saha simülatörünün ürettiği veriyle çalışır; yukarıdaki değerler de bu veri üzerinde, eğitimde kullanılmayan test kümeleri ve serilerle ölçülmüştür. Gerçek saha verisine geçildiğinde ekipman profilleri güncellenmeli ve modeller yeniden doğrulanmalıdır.
 
 ---
 
@@ -260,20 +265,20 @@ python ml/ingest_docs.py    # Sandvik PDF'lerini parçala → embed → Qdrant
 
 ```
 digital_twin/
-├── main.py                  # FastAPI giriş noktası, MQTT yayın döngüsü
+├── main.py                  # FastAPI giriş noktası, saha simülatörü döngüsü
 ├── app/
-│   ├── routers/             # sensors · anomalies · predict · rag · dashboard · report
-│   ├── services/            # anomaly_detector · lstm_predictor · rag_service
-│   │                        # embedding_service · mqtt_subscriber · n8n_notifier · report_generator
-│   ├── models/ · schemas/   # SQLAlchemy modelleri, Pydantic şemaları
-│   └── database.py · redis_client.py
+│   ├── config.py            # ortam ayarları, ekipman kataloğu
+│   ├── routers/             # dashboard · sensors · anomalies · predict · rag · report
+│   ├── services/            # pipeline (ortak veri hattı) · anomaly_detector · lstm_predictor
+│   │                        # rag_service · embedding_service · mqtt_subscriber · events (SSE)
+│   │                        # n8n_notifier · report_generator
+│   └── models/ · schemas/   # SQLAlchemy modelleri, Pydantic şemaları
 ├── data/                    # simülatör, MQTT yayıncı, seed, Kaggle veri seti
-├── ml/                      # eğitim, değerlendirme, doküman ingest, eğitilmiş modeller
-├── static/demo.html         # LOD dijital ikiz paneli
+├── ml/                      # eğitim, değerlendirme, doküman ingest, eğitilmiş LSTM modelleri
+├── static/                  # panel: index.html · css/ · js/ (derleme adımı yok)
+├── tests/                   # pytest
 ├── prototypes/              # araç ikizi, LOD maden, tünel şeması
-├── n8n/                     # anomali → PDF → e-posta/Slack workflow'u
-├── grafana/                 # dashboard + provisioning
-├── mosquitto/               # MQTT broker yapılandırması
+├── n8n/ · grafana/ · mosquitto/
 └── docker-compose.yml
 ```
 

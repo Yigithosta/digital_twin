@@ -8,7 +8,7 @@ Kurulduktan sonra Docker Desktop'ı Applications'dan aç ve tamamen başlamasın
 
 ## 2. Sanal ortam oluştur ve Python paketlerini kur
 ```bash
-cd ~/Desktop/digital_twin
+cd digital_twin
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -24,13 +24,21 @@ cp .env.example .env
 docker compose up -d
 ```
 
+## 5. API'yi başlat
+```bash
+uvicorn main:app --port 8000
+```
+Panel: http://localhost:8000
+
+> 5432 portu başka bir PostgreSQL tarafından kullanılıyorsa `.env` içinde `POSTGRES_PORT` değerini değiştirin.
+
 ## Servis Adresleri
 | Servis      | Adres                    | Kullanıcı | Şifre    |
 |-------------|--------------------------|-----------|----------|
 | TimescaleDB | localhost:5432           | postgres  | postgres |
 | Qdrant UI   | http://localhost:6333/dashboard | -   | -        |
 | Redis       | localhost:6379           | -         | -        |
-| n8n         | http://localhost:5678    | admin     | admin123 |
+| n8n         | http://localhost:5678    | ilk açılışta oluşturulur | |
 | Grafana     | http://localhost:3000    | admin     | admin123 |
 | FastAPI     | http://localhost:8000    | -         | -        |
 
